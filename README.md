@@ -1,2 +1,0 @@
-# MoWeS-Next
-MoWeS-Next
