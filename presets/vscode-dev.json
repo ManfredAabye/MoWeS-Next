@@ -1,0 +1,14 @@
+{
+  "package_name": "mowes-next-vscode-dev",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8081,
+  "db_port": 3307,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "gd", "curl", "mbstring"],
+  "root_password": "root",
+  "portable": true,
+  "service": false,
+  "profile": "vscode-dev",
+  "description": "Lokales Entwicklerprofil für VSCode-Projekte"
+}

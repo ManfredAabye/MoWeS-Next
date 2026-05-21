@@ -1,0 +1,16 @@
+{
+  "package_name": "mowes-next-api-backend",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8084,
+  "db_port": 3312,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "curl", "json", "openssl"],
+  "root_password": "api",
+  "portable": true,
+  "service": false,
+  "profile": "api-backend",
+  "description": "Preset for REST/API backend projects",
+  "database_name": "api",
+  "database_connection_string": "Data Source=localhost;Database=api;User ID=api;Password=***"
+}

@@ -1,0 +1,16 @@
+{
+  "package_name": "mowes-next-wordpress",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8082,
+  "db_port": 3309,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "gd", "curl", "mbstring", "zip", "openssl", "json"],
+  "root_password": "wordpress",
+  "portable": true,
+  "service": false,
+  "profile": "wordpress",
+  "description": "Preset for WordPress local development",
+  "database_name": "wordpress",
+  "database_connection_string": "Data Source=localhost;Database=wordpress;User ID=wordpress;Password=***"
+}

@@ -1,0 +1,14 @@
+{
+  "package_name": "mowes-next-test-project",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8088,
+  "db_port": 3308,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "gd", "curl"],
+  "root_password": "test",
+  "portable": true,
+  "service": false,
+  "profile": "test-project",
+  "description": "Schnelles Testprofil für temporäre Projekte"
+}

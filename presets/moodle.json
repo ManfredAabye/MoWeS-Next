@@ -1,0 +1,16 @@
+{
+  "package_name": "mowes-next-moodle",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8083,
+  "db_port": 3311,
+  "php_version": "8.2",
+  "php_extensions": ["mysqli", "gd", "curl", "mbstring", "zip", "intl", "xml", "soap"],
+  "root_password": "moodle",
+  "portable": true,
+  "service": false,
+  "profile": "moodle",
+  "description": "Preset for Moodle local development",
+  "database_name": "moodle",
+  "database_connection_string": "Data Source=localhost;Database=moodle;User ID=moodle;Password=***"
+}

@@ -1,0 +1,14 @@
+{
+  "package_name": "mowes-next-school-lab",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8090,
+  "db_port": 3310,
+  "php_version": "8.2",
+  "php_extensions": ["mysqli", "gd", "curl"],
+  "root_password": "school",
+  "portable": true,
+  "service": false,
+  "profile": "school-lab",
+  "description": "Profil für Schulungs- und Laborumgebungen"
+}
