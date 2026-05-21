@@ -1,0 +1,17 @@
+{
+  "package_name": "mowes-next-opensim-grid",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8080,
+  "db_port": 3306,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "gd", "curl"],
+  "root_password": "root",
+  "portable": true,
+  "service": false,
+  "application": "OpenSim-Grid",
+  "database_connections": {
+    "robust": "Data Source=localhost;Database=robust;User ID=opensim;Password=***",
+    "opensim": "Data Source=localhost;Database=opensim;User ID=opensim;Password=***"
+  }
+}
