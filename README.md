@@ -1,5 +1,7 @@
 # MoWeS-Next / MoWeS-Builder
 
+## Achtung experimentelles Entwicklungsprojekt.
+
 MoWeS-Next ist ein portabler lokaler Server-Stack (Apache + MariaDB), der mit dem Rust-basierten MoWeS-Builder aus ZIP-Komponenten aufgebaut wird.
 
 Diese Datei beschreibt Setup, Start, Build, CLI-Befehle, GUI-Nutzung und Wartung.
