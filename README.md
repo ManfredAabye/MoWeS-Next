@@ -1,7 +1,5 @@
 # MoWeS-Next / MoWeS-Builder
 
-## Achtung experimentelles Entwicklungsprojekt.
-
 MoWeS-Next ist ein portabler lokaler Server-Stack (Apache + MariaDB), der mit dem Rust-basierten MoWeS-Builder aus ZIP-Komponenten aufgebaut wird.
 
 Diese Datei beschreibt Setup, Start, Build, CLI-Befehle, GUI-Nutzung und Wartung.
@@ -60,6 +58,11 @@ cargo run --bin mowes-next -- doctor
 cargo run --bin mowes-next -- start
 ```
 
+Hinweis:
+
+- Das Control Center zeigt nach Build/Start die exakte Website-URL und die MariaDB-Zugangsdaten an.
+- Bei Port-Konflikten bevorzugt lokal `http://localhost:<port>/` statt `http://127.0.0.1:<port>/` testen.
+
 ## 3) Projektstruktur
 
 Wichtige Verzeichnisse:
@@ -95,62 +98,73 @@ cargo run --bin mowes-next -- status
 
 ## 5) GUI-Anwendungen
 
-## Voraussetzungen
+### MoWeS-Next Control Center (`mowes-ui`)
 
-- Windows
-- Rust/Cargo installiert
-- Apache- und MariaDB-ZIP-Dateien
-
-ZIP-Dateien entweder:
-
-- in `Components/` ablegen
-- oder in der GUI direkt auswählen
-Tabs:
-
-## Programm starten
-
-### Einfachster Weg
-
-- `Start.bat` per Doppelklick starten
-
-Das Script startet:
-
-- zuerst `target/release/mowes-ui.exe` (falls vorhanden)
-- sonst `cargo run --bin mowes-ui`
-- `Betrieb`: Start/Stop/Restart
-- `Wartung`: Service vorbereiten, Update-Manifest, Update-Bundle anwenden
-
-Zusätzlich:
-
-### Start im Terminal
+Start:
 
 ```powershell
 Set-Location D:\MoWeS-Next
 cargo run --bin mowes-ui
-```text
-- Statuskarten (Apache, MariaDB, Service, Plugins, Update)
-- Übersichtslinien mit Details
+```
+
+Aktueller Funktionsumfang:
+
+- grosses Startfenster fuer bessere Sichtbarkeit
+- Statuskarten fuer Apache, MariaDB, Service, Plugins und Update
+- Uebersicht mit Prozessstatus, Website-URL und MariaDB-Zugangsdaten
+
+Tab `Build`:
+
+- Preset auswaehlen
+- HTTP-Port und DB-Port direkt eingeben
+- Live-Validierung fuer freie/belegte/ungueltige Ports
+- Exportverzeichnis fuer `dist` frei waehlen
+- `Build from Components`
+- `Build from Preset`
+- `Build Installable`
+- `Build Installable from Preset`
+
+Tab `Betrieb`:
+
+- `Start`, `Stop`, `Restart`
+- `Refresh Overview`
+- `Index im Browser oeffnen`
+- `MariaDB Verbindung testen`
+- Bereich `Zugriffsdaten` mit:
+- Website-URL
+- direkter `index.html`-URL
+- MariaDB Host, Port, User, Passwort, Datenbankname
+
+Tab `Wartung`:
+
+- Service-Modus vorbereiten
+- Update-Manifest schreiben
+- Update-Bundle anwenden
+
+Wichtige Verhaltensweisen:
+
+- Beim ersten Start initialisiert das Control Center das MariaDB-Datadir automatisch, falls es noch nicht existiert.
+- Beim Start werden die tatsaechlich verwendeten Apache- und MariaDB-Versionen aus den laufenden Binaries ermittelt und als `versions.json` in die Web-Root geschrieben.
 
 ### MoWeS Builder (`mowes-builder`)
 
-- ZIP-Auswahl für Apache/MariaDB
-- Paketbau
-## Erste Schritte
+Start:
 
-1. GUI öffnen (`mowes-ui`)
-2. Tab `Build`:
-  - `Build from Components` oder
-  - `Select preset` + `Build from Preset`
-3. Tab `Betrieb`:
-  - `Start`
-4. Bei Problemen:
-  - `Refresh Overview` und Statuskarten prüfen
-- Diagnose
+```powershell
+Set-Location D:\MoWeS-Next
+cargo run --bin mowes-builder
+```
+
+Fokus:
+
+- ZIP-Auswahl fuer Apache und MariaDB
+- Paketbau
 
 ## 6) CLI-Befehle
 
 Alle Befehle im Projektroot ausführen:
-## Wichtige Befehle (CLI)
+
+### Wichtige Befehle
 
 ```powershell
 Set-Location D:\MoWeS-Next
@@ -167,13 +181,28 @@ cargo run --bin mowes-next -- status
 cargo run --bin mowes-next -- doctor
 ```
 
-```powershell
-Verfügbare Commands:
+### Verfuegbare Commands
 
-- `build` oder `build-package`:
-### Häufige Probleme
+- `build` oder `build-package`: Baut ein portables Paket aus `Components/`.
+- `build-installable`: Baut zusaetzlich eine installierbare Variante.
+- `build-preset <file>`: Baut aus einer Preset-JSON.
+- `build-installable-preset <file>`: Baut eine installierbare Variante aus einer Preset-JSON.
+- `start`: Startet Apache und MariaDB.
+- `stop`: Stoppt Apache und MariaDB.
+- `restart`: Neustart von Apache und MariaDB.
+- `status`: Zeigt Paket-, Log- und Prozessstatus.
+- `doctor`: Fuehrt Diagnosechecks fuer Build und Runtime aus.
+- `service-prepare`: Legt Service-Konfigurationsdateien an.
+- `service-status`: Zeigt den Service-Konfigurationsstatus an.
+- `plugins`: Listet Plugins aus `plugins/*.json`.
+- `update-check`: Prueft das lokale Update-Manifest.
+- `update-prepare [version]`: Schreibt oder aktualisiert `updates/update.manifest.json`.
+- `update-apply <dir>`: Wendet ein Update-Bundle aus einem Verzeichnis an.
+- `--headless` oder `headless`: Zeigt Status und Doctor ohne GUI an.
 
-### `Start.bat` startet nicht
+### Haeufige Probleme
+
+### GUI startet nicht ueber `Start.bat`
 
 - Prüfen: `cargo --version`
 - Falls keine Release-EXE vorhanden ist, startet das Script automatisch über Cargo
@@ -190,38 +219,6 @@ Set-Location D:\MoWeS-Next
 cargo check
 ```
 
-- Baut portables Paket aus `Components/`
-- `build-installable`:
-  - Baut installierbare Variante zusätzlich
-- `build-preset <file>`:
-  - Baut aus Preset-JSON
-- `build-installable-preset <file>`:
-  - Installable-Build aus Preset-JSON
-- `start`:
-  - Startet Apache + MariaDB
-- `stop`:
-  - Stoppt Apache + MariaDB
-- `restart`:
-  - Restart Apache + MariaDB
-- `status`:
-  - Zeigt Paket-/Log-/Prozessstatus
-- `doctor`:
-  - Diagnosechecks für Build/Runtime
-- `service-prepare`:
-  - Legt Service-Konfigurationsdateien an
-- `service-status`:
-  - Zeigt Service-Konfigurationsstatus
-- `plugins`:
-  - Listet Plugins aus `plugins/*.json`
-- `update-check`:
-  - Prüft lokales Update-Manifest
-- `update-prepare [version]`:
-  - Schreibt/aktualisiert `updates/update.manifest.json`
-- `update-apply <dir>`:
-  - Wendet Update-Bundle aus Verzeichnis an
-- `--headless` / `headless`:
-  - Status + Doctor ohne GUI
-
 ## 7) Presets (JSON)
 
 Beispiel: `presets/default.json`
@@ -229,12 +226,15 @@ Beispiel: `presets/default.json`
 ```json
 {
   "package_name": "mowes-next-package",
+  "output_base_dir": "dist",
   "apache_zip": "Components/apache.zip",
   "mariadb_zip": "Components/mariadb.zip",
   "http_port": 8080,
   "db_port": 3306,
   "php_version": "8.3",
   "php_extensions": ["mysqli", "gd", "curl"],
+  "database_name": "mowes",
+  "web_root": "./projects",
   "root_password": "root",
   "portable": true,
   "service": false
@@ -244,6 +244,10 @@ Beispiel: `presets/default.json`
 Hinweis:
 
 - Wenn `apache_zip`/`mariadb_zip` fehlen, versucht der Builder automatische Erkennung in `Components/`.
+- `output_base_dir` ist optional. Ohne Angabe wird nach `./dist` gebaut.
+- Das Control Center kann HTTP-Port, DB-Port und Exportverzeichnis auch ohne manuelle Preset-Aenderung ueberschreiben.
+- Die Versionsnummer für die Beispiel-Startseite wird aus der Datei `version` im Projekt-Root gelesen.
+- Die Datei `version` wird automatisch beim Cargo-Build mit der Paketversion aus `Cargo.toml` synchronisiert (`build.rs`).
 
 ## 8) Build-Ausgaben
 
@@ -251,13 +255,24 @@ Hinweis:
 
 - `dist/mowes-next-package/`
 
+Oder bei abweichender Konfiguration:
+
+- `<output_base_dir>/<package_name>/`
+
 Enthält u. a.:
 
 - `runtime/` (Apache, MariaDB, generated configs)
+- `runtime/apache/htdocs/index.html`
+- `runtime/apache/htdocs/versions.json`
 - `config/default.config.json`
 - `Start.bat`, `StartHeadless.bat`
 - `builder.manifest.json`
 - `THIRD_PARTY_NOTICES.txt`
+
+Hinweis:
+
+- Die ausgelieferte Website wird standardmaessig aus `runtime/apache/htdocs/` bedient.
+- `versions.json` enthaelt die tatsaechlich beim Start erkannten Apache- und MariaDB-Versionen.
 
 ### Installierbare Variante
 
@@ -349,6 +364,24 @@ cargo run --bin mowes-ui
 - Erst Build ausführen (`build` oder `build-preset`)
 - Sicherstellen, dass Apache/MariaDB-ZIPs korrekt sind
 - `doctor` ausführen und Fehlerdetails prüfen
+
+### `127.0.0.1` liefert 404, `localhost` funktioniert aber
+
+- Es kann ein lokaler Port-Konflikt mit einer anderen Anwendung vorliegen.
+- Im Zweifel `http://localhost:<port>/` testen.
+- HTTP-Port im Control Center auf einen freien Port aendern und Paket neu bauen.
+
+### MariaDB startet nicht manuell aus dem Projektroot
+
+- `mariadbd.exe --defaults-file=...` direkt aus dem falschen Arbeitsverzeichnis kann wegen relativer Pfade fehlschlagen.
+- Stattdessen Start ueber `cargo run --bin mowes-next -- start` oder ueber das Control Center verwenden.
+- Das Projekt initialisiert das Datadir bei Bedarf automatisch.
+
+### MariaDB erscheint nicht im Task-Manager
+
+- Pruefen, ob das Datadir unter `dist/.../data/mariadb/` existiert.
+- `cargo run --bin mowes-next -- start` erneut ausfuehren.
+- Im Control Center `MariaDB Verbindung testen` verwenden.
 
 ### Build schlägt fehl
 
