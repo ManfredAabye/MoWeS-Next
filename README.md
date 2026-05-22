@@ -4,6 +4,12 @@ MoWeS-Next ist ein portabler lokaler Server-Stack (Apache + MariaDB), der mit de
 
 Diese Datei beschreibt Setup, Start, Build, CLI-Befehle, GUI-Nutzung und Wartung.
 
+## Schnell-Checkliste Release
+
+1. `cargo run --bin mowes-next -- build-preset presets/mowes-next-os.json`
+1. Paketgroesse pruefen: `dist/mowes-next-os` (Ziel: <= 90 MB)
+1. `dist/mowes-next-os/` komplett weitergeben (USB/ZIP); Datadir initialisiert sich beim ersten Start automatisch.
+
 ## Inhalt
 
 1. Voraussetzungen
@@ -19,6 +25,7 @@ Diese Datei beschreibt Setup, Start, Build, CLI-Befehle, GUI-Nutzung und Wartung
 11. Update-System
 12. Logs und Diagnose
 13. Troubleshooting
+14. Release-Workflow (USB/Weitergabe)
 
 ## 1) Voraussetzungen
 
@@ -112,6 +119,7 @@ Aktueller Funktionsumfang:
 - grosses Startfenster fuer bessere Sichtbarkeit
 - Statuskarten fuer Apache, MariaDB, Service, Plugins und Update
 - Uebersicht mit Prozessstatus, Website-URL und MariaDB-Zugangsdaten
+- Anzeige konfigurierter Datenbanken aus der Paketkonfiguration
 
 Tab `Build`:
 
@@ -134,6 +142,7 @@ Tab `Betrieb`:
 - Website-URL
 - direkter `index.html`-URL
 - MariaDB Host, Port, User, Passwort, Datenbankname
+- konfigurierter Datenbankliste (z. B. `opensim`, `robust`)
 
 Tab `Wartung`:
 
@@ -145,6 +154,8 @@ Wichtige Verhaltensweisen:
 
 - Beim ersten Start initialisiert das Control Center das MariaDB-Datadir automatisch, falls es noch nicht existiert.
 - Beim Start werden die tatsaechlich verwendeten Apache- und MariaDB-Versionen aus den laufenden Binaries ermittelt und als `versions.json` in die Web-Root geschrieben.
+- Beim Start wird zusaetzlich ein DB-Report ausgegeben: `erstellt (...)`, `bereits vorhanden (...)` oder gemischt.
+- Das paketinterne `ControlGUI.ps1` zeigt Statusmeldungen farblich (OK/INFO/ERR) an.
 
 ### MoWeS Builder (`mowes-builder`)
 
@@ -234,6 +245,11 @@ Beispiel: `presets/default.json`
   "php_version": "8.3",
   "php_extensions": ["mysqli", "gd", "curl"],
   "database_name": "mowes",
+  "database_names": ["mowes", "robust"],
+  "database_connections": {
+    "robust": "Data Source=localhost;Database=robust;User ID=opensim;Password=***",
+    "opensim": "Data Source=localhost;Database=opensim;User ID=opensim;Password=***"
+  },
   "web_root": "./Data/http",
   "root_password": "root",
   "portable": true,
@@ -247,6 +263,8 @@ Hinweis:
 - Beim Entpacken werden nur fuer den Betrieb notwendige Runtime-Pfade aus Apache/MariaDB uebernommen (kein Voll-Export des gesamten Archivs).
 - Apache wird auf HTML/PHP-Betrieb reduziert; nicht benoetigte Module und Zusatzverzeichnisse werden entfernt.
 - MariaDB wird ohne Backup/Restore-Werkzeuge ausgeliefert; in `Data/SQL` bleiben nur erforderliche Datenbankstrukturen (z. B. ohne `test`).
+- Nach jedem Build werden `Data/SQL`, `logs/` und `temp/` automatisch bereinigt (Release-Cleanup fuer kleine Paketgroesse).
+- Das SQL-Datadir ist im ausgelieferten Paket absichtlich leer und wird beim ersten Start automatisch neu initialisiert.
 - `output_base_dir` ist optional. Ohne Angabe wird nach `./dist` gebaut.
 - Das Control Center kann HTTP-Port, DB-Port und Exportverzeichnis auch ohne manuelle Preset-Aenderung ueberschreiben.
 - Die Versionsnummer für die Beispiel-Startseite wird aus der Datei `version` im Projekt-Root gelesen.
@@ -267,6 +285,7 @@ Enthält u. a.:
 - `runtime/` (Apache, MariaDB, generated configs)
 - `runtime/apache/htdocs/index.html`
 - `runtime/apache/htdocs/versions.json`
+- `Data/http/index.html`
 - `config/default.config.json`
 - `Start.bat`, `StartHeadless.bat`
 - `builder.manifest.json`
@@ -276,6 +295,8 @@ Hinweis:
 
 - Die ausgelieferte Website wird standardmaessig aus `runtime/apache/htdocs/` bedient.
 - `versions.json` enthaelt die tatsaechlich beim Start erkannten Apache- und MariaDB-Versionen.
+- `index.html` zeigt zusaetzlich die konfigurierten Datenbanken aus dem Preset/Config an.
+- Das Paket wird nach dem Build fuer den Versand verkleinert; Laufzeitdaten werden erst beim ersten Start erzeugt.
 
 ### Installierbare Variante
 
@@ -382,7 +403,7 @@ cargo run --bin mowes-ui
 
 ### MariaDB erscheint nicht im Task-Manager
 
-- Pruefen, ob das Datadir unter `dist/.../Data/SQL/` existiert.
+- Ein leeres `dist/.../Data/SQL/` direkt nach dem Build ist normal (Release-Cleanup).
 - `cargo run --bin mowes-next -- start` erneut ausfuehren.
 - Im Control Center `MariaDB Verbindung testen` verwenden.
 
@@ -402,3 +423,39 @@ Maintainer-Hinweis:
 ```powershell
 cargo build --release --bin mowes-ui
 ```
+
+## 14) Release-Workflow (USB/Weitergabe)
+
+Ziel: Ein schlankes, portables Paket fuer Weitergabe an Dritte (z. B. USB-Stick), ohne Laufzeitreste aus deiner lokalen Session.
+
+1. Preset bauen:
+
+```powershell
+Set-Location D:\MoWeS-Next
+cargo run --bin mowes-next -- build-preset presets/mowes-next-os.json
+```
+
+1. Groesse pruefen (Ziel z. B. <= 90 MB):
+
+```powershell
+$p='D:\MoWeS-Next\dist\mowes-next-os'
+$size=(Get-ChildItem $p -Recurse -File | Measure-Object Length -Sum).Sum
+[math]::Round($size/1MB,2)
+```
+
+1. Ergebnis verifizieren:
+
+- `Data/SQL`, `logs/` und `temp/` sind direkt nach dem Build leer (automatischer Release-Cleanup).
+- `runtime/` und `config/default.config.json` sind enthalten.
+
+1. Optionaler Smoke-Test vor Versand:
+
+```powershell
+cargo run --bin mowes-next -- start
+cargo run --bin mowes-next -- stop
+```
+
+1. Weitergabe:
+
+- Verzeichnis `dist/mowes-next-os/` komplett auf den USB-Stick oder in ein ZIP fuer Dritte kopieren.
+- Beim ersten Start initialisiert MariaDB das leere Datadir automatisch und legt konfigurierte Datenbanken an.
