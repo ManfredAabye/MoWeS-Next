@@ -10,5 +10,7 @@
   "portable": true,
   "service": false,
   "profile": "school-lab",
-  "description": "Profil für Schulungs- und Laborumgebungen"
+  "description": "Profil für Schulungs- und Laborumgebungen",
+  "database_name": "school_lab",
+  "web_root": "./projects"
 }

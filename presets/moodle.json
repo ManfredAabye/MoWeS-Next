@@ -12,5 +12,6 @@
   "profile": "moodle",
   "description": "Preset for Moodle local development",
   "database_name": "moodle",
+  "web_root": "./projects",
   "database_connection_string": "Data Source=localhost;Database=moodle;User ID=moodle;Password=***"
 }

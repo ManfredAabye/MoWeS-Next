@@ -11,5 +11,6 @@
   "service": false,
   "application": "OpenSim",
   "database_name": "opensim",
+  "web_root": "./projects",
   "database_connection_string": "Data Source=localhost;Database=opensim;User ID=opensim;Password=***"
 }

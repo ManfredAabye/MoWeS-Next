@@ -10,5 +10,7 @@
   "portable": true,
   "service": false,
   "profile": "vscode-dev",
-  "description": "Lokales Entwicklerprofil für VSCode-Projekte"
+  "description": "Lokales Entwicklerprofil für VSCode-Projekte",
+  "database_name": "vscode_dev",
+  "web_root": "./projects"
 }

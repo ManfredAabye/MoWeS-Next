@@ -1,7 +1,7 @@
 {
-  "package_name": "mowes-next-opensim-grid",
-  "apache_zip": "Components/apache.zip",
-  "mariadb_zip": "Components/mariadb.zip",
+  "package_name": "mowes-next-os",
+  "apache_zip": "Components/httpd-2.4.67-260504-Win64-VS18.zip",
+  "mariadb_zip": "Components/mariadb-12.2.2-winx64.zip",
   "http_port": 8080,
   "db_port": 3306,
   "php_version": "8.3",

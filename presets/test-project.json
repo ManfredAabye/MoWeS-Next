@@ -10,5 +10,7 @@
   "portable": true,
   "service": false,
   "profile": "test-project",
-  "description": "Schnelles Testprofil für temporäre Projekte"
+  "description": "Schnelles Testprofil für temporäre Projekte",
+  "database_name": "test_project",
+  "web_root": "./projects"
 }

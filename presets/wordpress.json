@@ -12,5 +12,6 @@
   "profile": "wordpress",
   "description": "Preset for WordPress local development",
   "database_name": "wordpress",
+  "web_root": "./projects",
   "database_connection_string": "Data Source=localhost;Database=wordpress;User ID=wordpress;Password=***"
 }

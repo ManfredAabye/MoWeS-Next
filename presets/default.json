@@ -6,6 +6,8 @@
   "db_port": 3306,
   "php_version": "8.3",
   "php_extensions": ["mysqli", "gd", "curl"],
+  "database_name": "mowes",
+  "web_root": "./projects",
   "root_password": "root",
   "portable": true,
   "service": false
