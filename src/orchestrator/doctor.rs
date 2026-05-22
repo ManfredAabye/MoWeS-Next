@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::builder::package::detect_components;
+use crate::core::paths::resolve_package_dir;
 
 #[derive(Debug, Clone)]
 pub struct DoctorReport {
@@ -52,7 +53,8 @@ pub fn run_doctor(project_root: &Path) -> DoctorReport {
         }
     }
 
-    let dist_package = project_root.join("dist").join("mowes-next-package");
+    let dist_package = resolve_package_dir(project_root)
+        .unwrap_or_else(|_| project_root.join("dist").join("mowes-next-package"));
     checks.push(exists_check(
         "dist_package_dir",
         &dist_package,

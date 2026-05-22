@@ -1,13 +1,17 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use mowes_next::builder::package::{build_from_components, build_from_preset, build_installable_from_components, build_installable_from_preset};
+use mowes_next::core::paths::resolve_package_dir;
 use mowes_next::orchestrator::doctor::run_doctor;
 use mowes_next::orchestrator::health::check_health;
 use mowes_next::orchestrator::manager::{start_process, status_process, stop_process};
 use mowes_next::orchestrator::service::{prepare_service_mode, service_status};
 use mowes_next::plugins::discover_plugins;
 use mowes_next::update::{apply_update_bundle, check_local_update, UpdateManifest, write_update_manifest};
+use serde_json::json;
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -40,8 +44,9 @@ fn main() {
     }
 }
 
-fn runtime_root(project_root: &Path) -> PathBuf {
-    project_root.join("dist").join("mowes-next-package").join("runtime")
+fn package_root(project_root: &Path) -> PathBuf {
+    resolve_package_dir(project_root)
+        .unwrap_or_else(|_| project_root.join("dist").join("mowes-next-package"))
 }
 
 fn pid_dir(project_root: &Path) -> PathBuf {
@@ -122,15 +127,54 @@ fn run_build_installable_preset(project_root: &Path, preset_arg: Option<&String>
 }
 
 fn run_start(project_root: &Path) {
-    let runtime = runtime_root(project_root);
+    let package = package_root(project_root);
     let pids = pid_dir(project_root);
+    let mariadb_ini = package.join("runtime").join("generated").join("my.generated.ini");
+    let mariadb_data = package.join("data").join("mariadb");
+    let mariadb_log = package.join("logs").join("mariadb-error.log");
+    let apache_args: Vec<String> = Vec::new();
+    let mariadb_args = vec![
+        format!("--defaults-file={}", mariadb_ini.display()),
+        format!("--datadir={}", mariadb_data.display()),
+        format!("--log-error={}", mariadb_log.display()),
+    ];
+
+    let apache_exe = find_first_existing(
+        &package.join("runtime").join("apache"),
+        &["bin/httpd.exe", "httpd.exe"],
+    );
+    let mariadb_exe = find_first_existing(
+        &package,
+        &[
+            "runtime/mariadb/bin/mariadbd.exe",
+            "runtime/mariadb/mariadbd.exe",
+            "runtime/mariadb/bin/mysqld.exe",
+            "runtime/mariadb/mysqld.exe",
+        ],
+    );
+
+    let apache_version = apache_exe
+        .as_deref()
+        .map(|exe| detect_binary_version(exe, &["-v"]))
+        .unwrap_or_else(|| "unbekannt".to_string());
+    let mariadb_version = mariadb_exe
+        .as_deref()
+        .map(|exe| detect_binary_version(exe, &["--version"]))
+        .unwrap_or_else(|| "unbekannt".to_string());
+
+    let _ = write_runtime_versions_file(&package, &apache_version, &mariadb_version);
+
+    if let Err(err) = ensure_mariadb_initialized(&package) {
+        eprintln!("MariaDB konnte nicht initialisiert werden: {err}");
+        std::process::exit(2);
+    }
 
     match start_process(
         "apache",
-        &runtime.join("apache"),
+        &package.join("runtime").join("apache"),
         &pids,
         &["bin/httpd.exe", "httpd.exe"],
-        &[],
+        &apache_args,
     ) {
         Ok(status) => println!("Apache: {}", status.details),
         Err(err) => {
@@ -141,10 +185,10 @@ fn run_start(project_root: &Path) {
 
     match start_process(
         "mariadb",
-        &runtime.join("mariadb"),
+        &package,
         &pids,
-        &["bin/mariadbd.exe", "mariadbd.exe", "bin/mysqld.exe", "mysqld.exe"],
-        &[],
+        &["runtime/mariadb/bin/mariadbd.exe", "runtime/mariadb/mariadbd.exe", "runtime/mariadb/bin/mysqld.exe", "runtime/mariadb/mysqld.exe"],
+        &mariadb_args,
     ) {
         Ok(status) => println!("MariaDB: {}", status.details),
         Err(err) => {
@@ -154,6 +198,91 @@ fn run_start(project_root: &Path) {
     }
 
     run_status(project_root);
+}
+
+fn find_first_existing(base: &Path, candidates: &[&str]) -> Option<PathBuf> {
+    for rel in candidates {
+        let p = base.join(rel);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn detect_binary_version(exe: &Path, args: &[&str]) -> String {
+    let output = Command::new(exe).args(args).output();
+    let Ok(output) = output else {
+        return "unbekannt".to_string();
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout.lines().next().unwrap_or("unbekannt").to_string();
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr.lines().next().unwrap_or("unbekannt").to_string();
+    }
+
+    "unbekannt".to_string()
+}
+
+fn write_runtime_versions_file(package: &Path, apache_version: &str, mariadb_version: &str) -> Result<(), String> {
+    let htdocs = package.join("runtime").join("apache").join("htdocs");
+    fs::create_dir_all(&htdocs).map_err(|e| format!("htdocs create failed: {e}"))?;
+
+    let payload = json!({
+        "apache": apache_version,
+        "mariadb": mariadb_version,
+    });
+
+    let body = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("serialize versions failed: {e}"))?;
+    fs::write(htdocs.join("versions.json"), body)
+        .map_err(|e| format!("write versions.json failed: {e}"))?;
+
+    Ok(())
+}
+
+fn ensure_mariadb_initialized(package: &Path) -> Result<(), String> {
+    let data_dir = package.join("data").join("mariadb");
+    let logs_dir = package.join("logs");
+    fs::create_dir_all(&data_dir).map_err(|e| format!("datadir create failed: {e}"))?;
+    fs::create_dir_all(&logs_dir).map_err(|e| format!("logs dir create failed: {e}"))?;
+
+    // If mysql system tables exist, initialization has already happened.
+    if data_dir.join("mysql").exists() {
+        return Ok(());
+    }
+
+    let installer_candidates = [
+        package.join("runtime").join("mariadb").join("bin").join("mariadb-install-db.exe"),
+        package.join("runtime").join("mariadb").join("bin").join("mysql_install_db.exe"),
+    ];
+
+    let installer = installer_candidates
+        .iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| "mariadb-install-db.exe not found".to_string())?;
+
+    let output = Command::new(installer)
+        .arg("-d")
+        .arg(data_dir.display().to_string())
+        .arg("-p")
+        .arg("root")
+        .current_dir(package)
+        .output()
+        .map_err(|e| format!("installer execution failed: {e}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(format!("installer failed: {} {}", stdout.trim(), stderr.trim()))
+    }
 }
 
 fn run_stop(project_root: &Path) {
@@ -176,7 +305,7 @@ fn run_restart(project_root: &Path) {
 
 fn run_status(project_root: &Path) {
     let pids = pid_dir(project_root);
-    let dist_package = project_root.join("dist").join("mowes-next-package");
+    let dist_package = package_root(project_root);
     let logs = project_root.join("logs").join("builder.jsonl");
 
     println!("MoWeS-Next status");

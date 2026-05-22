@@ -17,7 +17,7 @@ pub struct ProcessStatus {
     pub details: String,
 }
 
-pub fn start_process(name: &'static str, runtime_dir: &Path, pid_dir: &Path, candidates: &[&str], args: &[&str]) -> io::Result<ProcessStatus> {
+pub fn start_process(name: &'static str, runtime_dir: &Path, pid_dir: &Path, candidates: &[&str], args: &[String]) -> io::Result<ProcessStatus> {
     fs::create_dir_all(pid_dir)?;
     let exe = find_executable(runtime_dir, candidates)?;
     let child = Command::new(&exe)

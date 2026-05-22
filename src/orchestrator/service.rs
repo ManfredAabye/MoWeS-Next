@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::paths::resolve_package_dir;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceModeConfig {
     pub enabled: bool,
@@ -25,9 +27,12 @@ pub fn prepare_service_mode(project_root: &Path) -> io::Result<ServiceModeStatus
     fs::create_dir_all(&service_dir)?;
     fs::create_dir_all(project_root.join("temp").join("pids"))?;
 
+    let package_dir = resolve_package_dir(project_root)
+        .unwrap_or_else(|_| project_root.join("dist").join("mowes-next-package"));
+
     let config = ServiceModeConfig {
         enabled: true,
-        executable: project_root.join("dist").join("mowes-next-package").join("mowes-next.exe").display().to_string(),
+        executable: package_dir.join("mowes-next.exe").display().to_string(),
         working_directory: project_root.display().to_string(),
         pid_directory: project_root.join("temp").join("pids").display().to_string(),
         auto_start: true,
