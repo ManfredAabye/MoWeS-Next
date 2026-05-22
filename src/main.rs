@@ -1,7 +1,10 @@
 use std::env;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 use mowes_next::builder::package::{build_from_components, build_from_preset, build_installable_from_components, build_installable_from_preset};
 use mowes_next::core::paths::resolve_package_dir;
@@ -11,7 +14,7 @@ use mowes_next::orchestrator::manager::{start_process, status_process, stop_proc
 use mowes_next::orchestrator::service::{prepare_service_mode, service_status};
 use mowes_next::plugins::discover_plugins;
 use mowes_next::update::{apply_update_bundle, check_local_update, UpdateManifest, write_update_manifest};
-use serde_json::json;
+use serde_json::{json, Value};
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -130,13 +133,15 @@ fn run_start(project_root: &Path) {
     let package = package_root(project_root);
     let pids = pid_dir(project_root);
     let mariadb_ini = package.join("runtime").join("generated").join("my.generated.ini");
-    let mariadb_data = package.join("data").join("mariadb");
+    let mariadb_data = package.join("Data").join("SQL");
     let mariadb_log = package.join("logs").join("mariadb-error.log");
+    let mariadb_pid = package.join("temp").join("mariadb.pid");
     let apache_args: Vec<String> = Vec::new();
     let mariadb_args = vec![
         format!("--defaults-file={}", mariadb_ini.display()),
         format!("--datadir={}", mariadb_data.display()),
         format!("--log-error={}", mariadb_log.display()),
+        format!("--pid-file={}", mariadb_pid.display()),
     ];
 
     let apache_exe = find_first_existing(
@@ -190,7 +195,16 @@ fn run_start(project_root: &Path) {
         &["runtime/mariadb/bin/mariadbd.exe", "runtime/mariadb/mariadbd.exe", "runtime/mariadb/bin/mysqld.exe", "runtime/mariadb/mysqld.exe"],
         &mariadb_args,
     ) {
-        Ok(status) => println!("MariaDB: {}", status.details),
+        Ok(status) => {
+            println!("MariaDB: {}", status.details);
+            match ensure_configured_databases(&package) {
+                Ok(report) => println!("MariaDB Datenbanken: {report}"),
+                Err(err) => {
+                    eprintln!("MariaDB Datenbanken konnten nicht angelegt werden: {err}");
+                    std::process::exit(2);
+                }
+            }
+        }
         Err(err) => {
             eprintln!("MariaDB konnte nicht gestartet werden: {err}");
             std::process::exit(2);
@@ -247,13 +261,14 @@ fn write_runtime_versions_file(package: &Path, apache_version: &str, mariadb_ver
 }
 
 fn ensure_mariadb_initialized(package: &Path) -> Result<(), String> {
-    let data_dir = package.join("data").join("mariadb");
+    let data_dir = package.join("Data").join("SQL");
     let logs_dir = package.join("logs");
     fs::create_dir_all(&data_dir).map_err(|e| format!("datadir create failed: {e}"))?;
     fs::create_dir_all(&logs_dir).map_err(|e| format!("logs dir create failed: {e}"))?;
 
     // If mysql system tables exist, initialization has already happened.
     if data_dir.join("mysql").exists() {
+        prune_sql_data_dir(&data_dir).map_err(|e| format!("sql datadir cleanup failed: {e}"))?;
         return Ok(());
     }
 
@@ -277,11 +292,259 @@ fn ensure_mariadb_initialized(package: &Path) -> Result<(), String> {
         .map_err(|e| format!("installer execution failed: {e}"))?;
 
     if output.status.success() {
+        prune_sql_data_dir(&data_dir).map_err(|e| format!("sql datadir cleanup failed: {e}"))?;
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         Err(format!("installer failed: {} {}", stdout.trim(), stderr.trim()))
+    }
+}
+
+fn prune_sql_data_dir(data_dir: &Path) -> io::Result<()> {
+    let non_runtime_dirs = ["test"];
+    let remove_files_by_name = [
+        "my.ini",
+        "multi-master.info",
+        "ddl_recovery.log",
+        "ib_buffer_pool",
+        "tc.log",
+        "auto.cnf",
+    ];
+    for name in non_runtime_dirs {
+        let path = data_dir.join(name);
+        if path.exists() {
+            fs::remove_dir_all(path)?;
+        }
+    }
+
+    for entry in fs::read_dir(data_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let ext = path
+            .extension()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let file_name = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        if ["bak", "tmp", "old", "err", "pid"].iter().any(|v| *v == ext)
+            || remove_files_by_name.iter().any(|v| *v == file_name)
+        {
+            fs::remove_file(path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_configured_databases(package: &Path) -> Result<String, String> {
+    let cfg_path = package.join("config").join("default.config.json");
+    let raw_cfg = fs::read_to_string(&cfg_path)
+        .map_err(|e| format!("config read failed ({}): {e}", cfg_path.display()))?;
+    let cfg: Value = serde_json::from_str(&raw_cfg)
+        .map_err(|e| format!("config parse failed ({}): {e}", cfg_path.display()))?;
+
+    let mariadb_cfg = cfg.get("mariadb").and_then(Value::as_object);
+    let mut db_names: Vec<String> = Vec::new();
+
+    if let Some(name) = mariadb_cfg
+        .and_then(|v| v.get("database_name"))
+        .and_then(Value::as_str)
+    {
+        db_names.push(name.to_string());
+    }
+
+    if let Some(list) = mariadb_cfg
+        .and_then(|v| v.get("database_names"))
+        .and_then(Value::as_array)
+    {
+        for item in list {
+            if let Some(name) = item.as_str() {
+                db_names.push(name.to_string());
+            }
+        }
+    }
+
+    let mut db_names: Vec<String> = db_names
+        .into_iter()
+        .filter_map(|name| normalize_db_name(&name))
+        .collect();
+    db_names.sort();
+    db_names.dedup();
+
+    if db_names.is_empty() {
+        return Ok("keine konfigurierten Datenbanken".to_string());
+    }
+
+    let db_port = mariadb_cfg
+        .and_then(|v| v.get("port"))
+        .and_then(Value::as_u64)
+        .and_then(|v| u16::try_from(v).ok())
+        .unwrap_or(3306);
+    let db_password = mariadb_cfg
+        .and_then(|v| v.get("root_password"))
+        .and_then(Value::as_str)
+        .unwrap_or("root")
+        .to_string();
+
+    let client = find_first_existing(
+        &package.join("runtime").join("mariadb").join("bin"),
+        &["mariadb.exe", "mysql.exe"],
+    )
+    .ok_or_else(|| "mariadb.exe/mysql.exe nicht gefunden (fuer DB-Initialisierung erforderlich)".to_string())?;
+
+    let mut last_error = String::new();
+    for _ in 0..20 {
+        let mut cmd = Command::new(&client);
+        cmd.arg("-h")
+            .arg("127.0.0.1")
+            .arg("-P")
+            .arg(db_port.to_string())
+            .arg("-u")
+            .arg("root")
+            .arg("-N");
+        if !db_password.is_empty() {
+            cmd.arg(format!("-p{}", db_password));
+        }
+        let output = cmd
+            .arg("-e")
+            .arg("SELECT 1;")
+            .current_dir(package)
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => break,
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                last_error = if !stderr.is_empty() { stderr } else { stdout };
+            }
+            Err(err) => last_error = err.to_string(),
+        }
+
+        thread::sleep(Duration::from_millis(350));
+    }
+
+    if !last_error.is_empty() {
+        let mut ready_check = Command::new(&client);
+        ready_check
+            .arg("-h")
+            .arg("127.0.0.1")
+            .arg("-P")
+            .arg(db_port.to_string())
+            .arg("-u")
+            .arg("root")
+            .arg("-N");
+        if !db_password.is_empty() {
+            ready_check.arg(format!("-p{}", db_password));
+        }
+        let ready_output = ready_check
+            .arg("-e")
+            .arg("SELECT 1;")
+            .current_dir(package)
+            .output()
+            .map_err(|e| format!("DB-Ready-Check fehlgeschlagen: {e}"))?;
+        if !ready_output.status.success() {
+            return Err(format!("DB-Initialisierung fehlgeschlagen: {last_error}"));
+        }
+    }
+
+    let run_sql = |sql: &str| -> Result<std::process::Output, String> {
+        let mut cmd = Command::new(&client);
+        cmd.arg("-h")
+            .arg("127.0.0.1")
+            .arg("-P")
+            .arg(db_port.to_string())
+            .arg("-u")
+            .arg("root")
+            .arg("-N");
+        if !db_password.is_empty() {
+            cmd.arg(format!("-p{}", db_password));
+        }
+        cmd.arg("-e")
+            .arg(sql)
+            .current_dir(package)
+            .output()
+            .map_err(|e| format!("SQL-Ausfuehrung fehlgeschlagen: {e}"))
+    };
+
+    let mut created: Vec<String> = Vec::new();
+    let mut existing: Vec<String> = Vec::new();
+
+    for name in &db_names {
+        let exists_sql = format!(
+            "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '{}';",
+            name
+        );
+        let exists_output = run_sql(&exists_sql)?;
+        if !exists_output.status.success() {
+            let stderr = String::from_utf8_lossy(&exists_output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&exists_output.stdout).trim().to_string();
+            let reason = if !stderr.is_empty() { stderr } else { stdout };
+            return Err(format!("DB-Existenzpruefung fehlgeschlagen fuer {name}: {reason}"));
+        }
+
+        let exists = String::from_utf8_lossy(&exists_output.stdout)
+            .lines()
+            .any(|line| line.trim() == name);
+        if exists {
+            existing.push(name.clone());
+            continue;
+        }
+
+        let create_sql = format!(
+            "CREATE DATABASE IF NOT EXISTS `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+        );
+        let create_output = run_sql(&create_sql)?;
+        if !create_output.status.success() {
+            let stderr = String::from_utf8_lossy(&create_output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&create_output.stdout).trim().to_string();
+            let reason = if !stderr.is_empty() { stderr } else { stdout };
+            return Err(format!("DB-Anlage fehlgeschlagen fuer {name}: {reason}"));
+        }
+
+        created.push(name.clone());
+    }
+
+    let report = if !created.is_empty() && !existing.is_empty() {
+        format!(
+            "erstellt ({}), bereits vorhanden ({})",
+            created.join(", "),
+            existing.join(", ")
+        )
+    } else if !created.is_empty() {
+        format!("erstellt ({})", created.join(", "))
+    } else if !existing.is_empty() {
+        format!("bereits vorhanden ({})", existing.join(", "))
+    } else {
+        "keine konfigurierten Datenbanken".to_string()
+    };
+
+    Ok(report)
+}
+
+fn normalize_db_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+    {
+        Some(trimmed.to_string())
+    } else {
+        None
     }
 }
 

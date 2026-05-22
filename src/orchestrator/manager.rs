@@ -2,6 +2,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeLayout {
@@ -20,13 +22,22 @@ pub struct ProcessStatus {
 pub fn start_process(name: &'static str, runtime_dir: &Path, pid_dir: &Path, candidates: &[&str], args: &[String]) -> io::Result<ProcessStatus> {
     fs::create_dir_all(pid_dir)?;
     let exe = find_executable(runtime_dir, candidates)?;
-    let child = Command::new(&exe)
+    let mut child = Command::new(&exe)
         .args(args)
         .current_dir(runtime_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
+
+    // Catch immediate startup failures (e.g. invalid config) before writing pid files.
+    thread::sleep(Duration::from_millis(400));
+    if let Some(status) = child.try_wait()? {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("process exited early with status {status}"),
+        ));
+    }
 
     let pid = child.id();
     let pid_file = pid_dir.join(format!("{name}.pid"));
@@ -45,6 +56,17 @@ pub fn stop_process(name: &'static str, pid_dir: &Path) -> io::Result<ProcessSta
     let pid = read_pid(&pid_file)?;
 
     if let Some(pid) = pid {
+        let running = is_pid_running(pid)?;
+        if !running {
+            let _ = fs::remove_file(&pid_file);
+            return Ok(ProcessStatus {
+                name,
+                running: false,
+                pid: Some(pid),
+                details: format!("already stopped pid {pid}"),
+            });
+        }
+
         terminate_pid(pid)?;
         let _ = fs::remove_file(&pid_file);
         Ok(ProcessStatus {

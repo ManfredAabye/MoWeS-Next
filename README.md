@@ -234,7 +234,7 @@ Beispiel: `presets/default.json`
   "php_version": "8.3",
   "php_extensions": ["mysqli", "gd", "curl"],
   "database_name": "mowes",
-  "web_root": "./projects",
+  "web_root": "./Data/http",
   "root_password": "root",
   "portable": true,
   "service": false
@@ -244,6 +244,9 @@ Beispiel: `presets/default.json`
 Hinweis:
 
 - Wenn `apache_zip`/`mariadb_zip` fehlen, versucht der Builder automatische Erkennung in `Components/`.
+- Beim Entpacken werden nur fuer den Betrieb notwendige Runtime-Pfade aus Apache/MariaDB uebernommen (kein Voll-Export des gesamten Archivs).
+- Apache wird auf HTML/PHP-Betrieb reduziert; nicht benoetigte Module und Zusatzverzeichnisse werden entfernt.
+- MariaDB wird ohne Backup/Restore-Werkzeuge ausgeliefert; in `Data/SQL` bleiben nur erforderliche Datenbankstrukturen (z. B. ohne `test`).
 - `output_base_dir` ist optional. Ohne Angabe wird nach `./dist` gebaut.
 - Das Control Center kann HTTP-Port, DB-Port und Exportverzeichnis auch ohne manuelle Preset-Aenderung ueberschreiben.
 - Die Versionsnummer für die Beispiel-Startseite wird aus der Datei `version` im Projekt-Root gelesen.
@@ -379,7 +382,7 @@ cargo run --bin mowes-ui
 
 ### MariaDB erscheint nicht im Task-Manager
 
-- Pruefen, ob das Datadir unter `dist/.../data/mariadb/` existiert.
+- Pruefen, ob das Datadir unter `dist/.../Data/SQL/` existiert.
 - `cargo run --bin mowes-next -- start` erneut ausfuehren.
 - Im Control Center `MariaDB Verbindung testen` verwenden.
 
@@ -388,10 +391,6 @@ cargo run --bin mowes-ui
 - `cargo check` ausführen
 - Fehlermeldungen in der Konsole lesen
 - Bei ZIP-Problemen Dateinamen und Inhalt prüfen (`httpd.exe`, `mariadbd.exe`/`mysqld.exe`)
-
-### Dist startet nicht
-
-- Wenn Start.bat oder StartHeadless.bat nicht funktioniert dann nutzen sie ControlGUI.bat
 
 ---
 

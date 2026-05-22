@@ -7,8 +7,9 @@
   "php_version": "8.3",
   "php_extensions": ["mysqli", "gd", "curl"],
   "database_name": "mowes",
-  "web_root": "./projects",
+  "web_root": "./Data/http",
   "root_password": "root",
   "portable": true,
   "service": false
 }
+

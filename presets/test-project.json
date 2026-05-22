@@ -12,5 +12,6 @@
   "profile": "test-project",
   "description": "Schnelles Testprofil für temporäre Projekte",
   "database_name": "test_project",
-  "web_root": "./projects"
+  "web_root": "./Data/http"
 }
+

@@ -11,9 +11,10 @@
   "service": false,
   "application": "OpenSim-Grid",
   "database_name": "opensim",
-  "web_root": "./projects",
+  "web_root": "./Data/http",
   "database_connections": {
     "robust": "Data Source=localhost;Database=robust;User ID=opensim;Password=***",
     "opensim": "Data Source=localhost;Database=opensim;User ID=opensim;Password=***"
   }
 }
+

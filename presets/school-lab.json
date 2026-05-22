@@ -12,5 +12,6 @@
   "profile": "school-lab",
   "description": "Profil für Schulungs- und Laborumgebungen",
   "database_name": "school_lab",
-  "web_root": "./projects"
+  "web_root": "./Data/http"
 }
+

@@ -12,5 +12,6 @@
   "profile": "vscode-dev",
   "description": "Lokales Entwicklerprofil für VSCode-Projekte",
   "database_name": "vscode_dev",
-  "web_root": "./projects"
+  "web_root": "./Data/http"
 }
+
