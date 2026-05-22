@@ -389,6 +389,10 @@ cargo run --bin mowes-ui
 - Fehlermeldungen in der Konsole lesen
 - Bei ZIP-Problemen Dateinamen und Inhalt prüfen (`httpd.exe`, `mariadbd.exe`/`mysqld.exe`)
 
+### Dist startet nicht
+
+- Wenn Start.bat oder StartHeadless.bat nicht funktioniert das nutzen sie ControlGUI.bat
+
 ---
 
 Maintainer-Hinweis:
