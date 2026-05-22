@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mowes-next</title>
+  <style>
+    body {
+      font-family: Segoe UI, sans-serif;
+      margin: 2rem;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      max-width: 760px;
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+    }
+    h1 { margin-top: 0; }
+    .muted { color: #475569; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Willkommen bei mowes-next 26.5.0</h1>
+    <p><strong>Apache-Version:</strong> <span id="apache-version">wird geladen...</span></p>
+    <p><strong>MariaDB-Version:</strong> <span id="mariadb-version">wird geladen...</span></p>
+    <p class="muted">Die Versionen werden live aus versions.json der aktuell laufenden Runtime geladen.</p>
+  </div>
+  <script>
+    fetch('/versions.json', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (v) {
+        document.getElementById('apache-version').textContent = v.apache || 'unbekannt';
+        document.getElementById('mariadb-version').textContent = v.mariadb || 'unbekannt';
+      })
+      .catch(function () {
+        document.getElementById('apache-version').textContent = 'unbekannt';
+        document.getElementById('mariadb-version').textContent = 'unbekannt';
+      });
+  </script>
+</body>
+</html>
