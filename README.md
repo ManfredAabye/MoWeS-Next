@@ -391,7 +391,7 @@ cargo run --bin mowes-ui
 
 ### Dist startet nicht
 
-- Wenn Start.bat oder StartHeadless.bat nicht funktioniert das nutzen sie ControlGUI.bat
+- Wenn Start.bat oder StartHeadless.bat nicht funktioniert dann nutzen sie ControlGUI.bat
 
 ---
 
