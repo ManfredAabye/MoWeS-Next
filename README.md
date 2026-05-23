@@ -46,8 +46,8 @@ Empfohlen:
 
 Verhalten:
 
-- Startet zuerst `target/release/mowes-ui.exe`, falls vorhanden
-- Fällt sonst auf `cargo run --bin mowes-ui` zurück
+- Startet `mowes-next.exe` im selben Verzeichnis wie `Start.bat`.
+- In der Entwicklungs-Workspace ist fuer den Start weiterhin `cargo run --bin mowes-ui` bzw. `cargo run --bin mowes-next -- start` der empfohlene Weg.
 
 ### Variante B: Direkt im Terminal
 
@@ -84,6 +84,37 @@ Wichtige Verzeichnisse:
 - `target/` Rust-Build-Artefakte (debug/release)
 
 ## 4) Startvarianten
+
+### Workspace-Start vs. dist-Start
+
+Es gibt zwei unterschiedliche Startkontexte:
+
+- Workspace-Start (Entwicklung): Start aus dem Projektordner, typischerweise per Cargo.
+- dist-Start (Auslieferung): Start aus dem gebauten Paketordner unter `dist/<package>/`.
+
+Workspace-Start:
+
+- Nutzt Rust-Binaries aus `target/`.
+- Geeignet fuer Entwicklung, Debugging und iterative Tests.
+- Typische Befehle:
+
+```powershell
+Set-Location D:\MoWeS-Next
+cargo run --bin mowes-ui
+# oder
+cargo run --bin mowes-next -- start
+```
+
+dist-Start:
+
+- Nutzt die Dateien im gebauten Paket (z. B. `dist/mowes-next-os/`).
+- Geeignet fuer Weitergabe/USB und realistische Runtime-Tests.
+- Start ueber `Start.bat` im Paketordner.
+
+Wichtig:
+
+- Vor einem neuen Build wird ein gleichnamiges Zielverzeichnis (z. B. `dist/mowes-next-os`) geloescht und neu erstellt.
+- Wenn du Dateien manuell in `dist/...` ablegst, gehen sie beim naechsten Build verloren.
 
 ### GUI Control Center
 
@@ -156,6 +187,8 @@ Wichtige Verhaltensweisen:
 - Beim ersten Start initialisiert das Control Center das MariaDB-Datadir automatisch, falls es noch nicht existiert.
 - Beim Start werden die PHP-Tempordner (`runtime/php/tmp/sessions`, `runtime/php/tmp/upload`) automatisch angelegt.
 - Beim Start werden die tatsaechlich verwendeten Apache- und MariaDB-Versionen aus den laufenden Binaries ermittelt und als `versions.json` in die Web-Root geschrieben.
+- Die Startseite wird aus `projects/index.html` als Template erzeugt (`{{MOWES_VERSION}}`, `{{DATABASE_NAMES}}`).
+- Die Startseite zeigt Links auf WordPress, phpMyAdmin und oswebinterface nur dann an, wenn der jeweilige Endpoint erreichbar ist; die Links werden als absolute URL mit aktuellem Host/Port angezeigt.
 - Beim Start wird zusaetzlich ein DB-Report ausgegeben: `erstellt (...)`, `bereits vorhanden (...)` oder gemischt.
 - Das paketinterne `ControlGUI.ps1` zeigt Statusmeldungen farblich (OK/INFO/ERR) an.
 
@@ -279,6 +312,7 @@ Beispiel: `presets/default.json`
 Hinweis:
 
 - Wenn `apache_zip`/`mariadb_zip` fehlen, versucht der Builder automatische Erkennung in `Components/`.
+- Vor jedem Build wird ein gleichnamiges Zielverzeichnis (z. B. `dist/mowes-next-os`) vollstaendig geloescht und neu erstellt.
 - Das Control Center erkennt zusaetzliche `*.zip` in `Components/` (ausser Apache/MariaDB) automatisch als auswaehlbare Zusatz-Components.
 - Ausgewaehlte Zusatz-Components werden beim Build in den Web-Root integriert (`<web_root>/<target_subdir>`).
 - Zusatz-Components werden in den konfigurierten Web-Root entpackt (`<web_root>/<target_subdir>`, standardmaessig `Data/http/<target_subdir>`).
@@ -311,6 +345,7 @@ Oder bei abweichender Konfiguration:
 Enthält u. a.:
 
 - `runtime/` (Apache, MariaDB, generated configs)
+- `projects/index.html` wird als Build-Template nach `Data/http/index.html` aufgeloest
 - `Data/http/versions.json`
 - `runtime/php/php.ini`
 - `runtime/php/tmp/sessions/`
@@ -405,7 +440,7 @@ cargo run --bin mowes-next -- doctor
 ### `Start.bat` startet nicht
 
 - Prüfen, ob Rust/Cargo installiert ist (`cargo --version`)
-- Prüfen, ob `target/release/mowes-ui.exe` existiert
+- Prüfen, ob neben `Start.bat` eine `mowes-next.exe` vorhanden ist
 - Notfalls direkt starten:
 
 ```powershell
