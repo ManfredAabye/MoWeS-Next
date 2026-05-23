@@ -21,13 +21,21 @@
     }
     h1 { margin-top: 0; }
     .muted { color: #475569; }
+    #apps { margin-top: 1rem; }
+    #app-links { margin: 0.4rem 0 0; padding-left: 1.25rem; }
+    #app-links li { margin: 0.2rem 0; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Willkommen bei mowes-next 26.5.0</h1>
+    <h1>Willkommen bei mowes-next {{MOWES_VERSION}}</h1>
     <p><strong>Apache-Version:</strong> <span id="apache-version">wird geladen...</span></p>
     <p><strong>MariaDB-Version:</strong> <span id="mariadb-version">wird geladen...</span></p>
+    <p><strong>Datenbanken:</strong> <span id="db-names">{{DATABASE_NAMES}}</span></p>
+    <div id="apps" hidden>
+      <p><strong>Installierte Web-Apps:</strong></p>
+      <ul id="app-links"></ul>
+    </div>
     <p class="muted">Die Versionen werden live aus versions.json der aktuell laufenden Runtime geladen.</p>
   </div>
   <script>
@@ -41,6 +49,37 @@
         document.getElementById('apache-version').textContent = 'unbekannt';
         document.getElementById('mariadb-version').textContent = 'unbekannt';
       });
+
+    function addAppLink(path, label) {
+      var ul = document.getElementById('app-links');
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      var url = new URL(path, window.location.origin).href;
+      a.href = url;
+      a.textContent = label + ' (' + url + ')';
+      li.appendChild(a);
+      ul.appendChild(li);
+      document.getElementById('apps').hidden = false;
+    }
+
+    function detectInstalledApp(path, label) {
+      return fetch(path, { cache: 'no-store' })
+        .then(function (response) {
+          // 2xx/3xx/4xx (außer 404) deuten auf vorhandenen Endpoint hin.
+          if (response.status !== 404 && response.status < 500) {
+            addAppLink(path, label);
+          }
+        })
+        .catch(function () {
+          // Kein Link, wenn der Endpoint nicht erreichbar ist.
+        });
+    }
+
+    Promise.all([
+      detectInstalledApp('/wordpress/', 'WordPress'),
+      detectInstalledApp('/phpmyadmin/', 'phpMyAdmin'),
+      detectInstalledApp('/oswebinterface/', 'oswebinterface')
+    ]);
   </script>
 </body>
 </html>
