@@ -1,0 +1,28 @@
+{
+  "package_name": "mowes-next-microservice",
+  "output_base_dir": "dist",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8092,
+  "db_port": 3312,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "curl", "json", "openssl"],
+  "root_password": "micro",
+  "portable": true,
+  "service": false,
+  "application": "Microservice-Architektur",
+  "database_name": "auth_service",
+  "database_names": [
+    "auth_service",
+    "device_service",
+    "analytics_service",
+    "notification_service"
+  ],
+  "database_connections": {
+    "auth_service": "Data Source=localhost;Database=auth_service;User ID=micro;Password=micro",
+    "device_service": "Data Source=localhost;Database=device_service;User ID=micro;Password=micro",
+    "analytics_service": "Data Source=localhost;Database=analytics_service;User ID=micro;Password=micro",
+    "notification_service": "Data Source=localhost;Database=notification_service;User ID=micro;Password=micro"
+  },
+  "web_root": "./Data/http"
+}

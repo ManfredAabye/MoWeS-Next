@@ -1,0 +1,28 @@
+{
+  "package_name": "mowes-next-k8s-cluster",
+  "output_base_dir": "dist",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8093,
+  "db_port": 3313,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "curl", "json"],
+  "root_password": "k8s",
+  "portable": true,
+  "service": false,
+  "application": "Kubernetes-Cluster",
+  "database_name": "cluster_core",
+  "database_names": [
+    "cluster_core",
+    "cluster_monitoring",
+    "cluster_registry",
+    "cluster_audit"
+  ],
+  "database_connections": {
+    "cluster_core": "Data Source=localhost;Database=cluster_core;User ID=k8s;Password=k8s",
+    "cluster_monitoring": "Data Source=localhost;Database=cluster_monitoring;User ID=k8s;Password=k8s",
+    "cluster_registry": "Data Source=localhost;Database=cluster_registry;User ID=k8s;Password=k8s",
+    "cluster_audit": "Data Source=localhost;Database=cluster_audit;User ID=k8s;Password=k8s"
+  },
+  "web_root": "./Data/http"
+}

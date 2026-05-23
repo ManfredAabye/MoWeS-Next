@@ -1,0 +1,28 @@
+{
+  "package_name": "mowes-next-smart-city",
+  "output_base_dir": "dist",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8098,
+  "db_port": 3318,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "curl", "json"],
+  "root_password": "city",
+  "portable": true,
+  "service": false,
+  "application": "Smart-City",
+  "database_name": "city_traffic",
+  "database_names": [
+    "city_traffic",
+    "city_parking",
+    "city_environment",
+    "city_energy"
+  ],
+  "database_connections": {
+    "city_traffic": "Data Source=localhost;Database=city_traffic;User ID=city;Password=city",
+    "city_parking": "Data Source=localhost;Database=city_parking;User ID=city;Password=city",
+    "city_environment": "Data Source=localhost;Database=city_environment;User ID=city;Password=city",
+    "city_energy": "Data Source=localhost;Database=city_energy;User ID=city;Password=city"
+  },
+  "web_root": "./Data/http"
+}

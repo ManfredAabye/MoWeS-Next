@@ -1,0 +1,28 @@
+{
+  "package_name": "mowes-next-enterprise-security",
+  "output_base_dir": "dist",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8094,
+  "db_port": 3314,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "curl", "openssl", "json"],
+  "root_password": "secure",
+  "portable": true,
+  "service": false,
+  "application": "Standard-Enterprise-Security",
+  "database_name": "security_core",
+  "database_names": [
+    "security_core",
+    "security_identity",
+    "security_roles",
+    "security_audit"
+  ],
+  "database_connections": {
+    "security_core": "Data Source=localhost;Database=security_core;User ID=secure;Password=secure",
+    "security_identity": "Data Source=localhost;Database=security_identity;User ID=secure;Password=secure",
+    "security_roles": "Data Source=localhost;Database=security_roles;User ID=secure;Password=secure",
+    "security_audit": "Data Source=localhost;Database=security_audit;User ID=secure;Password=secure"
+  },
+  "web_root": "./Data/http"
+}

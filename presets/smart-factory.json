@@ -1,0 +1,28 @@
+{
+  "package_name": "mowes-next-smart-factory",
+  "output_base_dir": "dist",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8091,
+  "db_port": 3311,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "gd", "curl", "json"],
+  "root_password": "factory",
+  "portable": true,
+  "service": false,
+  "application": "Smart-Factory",
+  "database_name": "factory_core",
+  "database_names": [
+    "factory_core",
+    "factory_oee",
+    "factory_maintenance",
+    "factory_alarm"
+  ],
+  "database_connections": {
+    "factory_core": "Data Source=localhost;Database=factory_core;User ID=factory;Password=factory",
+    "factory_oee": "Data Source=localhost;Database=factory_oee;User ID=factory;Password=factory",
+    "factory_maintenance": "Data Source=localhost;Database=factory_maintenance;User ID=factory;Password=factory",
+    "factory_alarm": "Data Source=localhost;Database=factory_alarm;User ID=factory;Password=factory"
+  },
+  "web_root": "./Data/http"
+}

@@ -1,0 +1,28 @@
+{
+  "package_name": "mowes-next-hochsicherheitsumgebung",
+  "output_base_dir": "dist",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8102,
+  "db_port": 3322,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "curl", "openssl", "json"],
+  "root_password": "ultrasec",
+  "portable": true,
+  "service": false,
+  "application": "Hochsicherheitsumgebung",
+  "database_name": "zero_trust_core",
+  "database_names": [
+    "zero_trust_core",
+    "mfa_tokens",
+    "siem_events",
+    "hsm_keys"
+  ],
+  "database_connections": {
+    "zero_trust_core": "Data Source=localhost;Database=zero_trust_core;User ID=ultrasec;Password=ultrasec",
+    "mfa_tokens": "Data Source=localhost;Database=mfa_tokens;User ID=ultrasec;Password=ultrasec",
+    "siem_events": "Data Source=localhost;Database=siem_events;User ID=ultrasec;Password=ultrasec",
+    "hsm_keys": "Data Source=localhost;Database=hsm_keys;User ID=ultrasec;Password=ultrasec"
+  },
+  "web_root": "./Data/http"
+}
