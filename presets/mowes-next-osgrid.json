@@ -1,0 +1,29 @@
+{
+  "package_name": "mowes-next-os",
+  "apache_zip": "Components/httpd-2.4.67-260504-Win64-VS18.zip",
+  "mariadb_zip": "Components/mariadb-12.2.2-winx64.zip",
+  "http_port": 8080,
+  "db_port": 3306,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "gd", "curl"],
+  "root_password": "root",
+  "portable": true,
+  "service": false,
+  "application": "OpenSim-Grid",
+  "database_name": "opensim",
+  "web_root": "./Data/http",
+  "database_connections": {
+    "robust": "Data Source=localhost;Database=robust;User ID=opensim;Password=opensim",
+    "opensim": "Data Source=localhost;Database=opensim;User ID=opensim;Password=opensim",
+    "sim1": "Data Source=localhost;Database=sim1;User ID=opensim;Password=opensim",
+    "sim2": "Data Source=localhost;Database=sim2;User ID=opensim;Password=opensim",
+    "sim3": "Data Source=localhost;Database=sim3;User ID=opensim;Password=opensim",
+    "sim4": "Data Source=localhost;Database=sim4;User ID=opensim;Password=opensim",
+    "sim5": "Data Source=localhost;Database=sim5;User ID=opensim;Password=opensim",
+    "sim6": "Data Source=localhost;Database=sim6;User ID=opensim;Password=opensim",
+    "sim7": "Data Source=localhost;Database=sim7;User ID=opensim;Password=opensim",
+    "sim8": "Data Source=localhost;Database=sim8;User ID=opensim;Password=opensim",
+    "sim9": "Data Source=localhost;Database=sim9;User ID=opensim;Password=opensim"
+  }
+}
+
