@@ -118,6 +118,7 @@ Aktueller Funktionsumfang:
 
 - grosses Startfenster fuer bessere Sichtbarkeit
 - Statuskarten fuer Apache, MariaDB, Service, Plugins und Update
+- Status-Detailzeile fuer PHP (php-cgi/php.ini/mysqli)
 - Uebersicht mit Prozessstatus, Website-URL und MariaDB-Zugangsdaten
 - Anzeige konfigurierter Datenbanken aus der Paketkonfiguration
 
@@ -153,6 +154,7 @@ Tab `Wartung`:
 Wichtige Verhaltensweisen:
 
 - Beim ersten Start initialisiert das Control Center das MariaDB-Datadir automatisch, falls es noch nicht existiert.
+- Beim Start werden die PHP-Tempordner (`runtime/php/tmp/sessions`, `runtime/php/tmp/upload`) automatisch angelegt.
 - Beim Start werden die tatsaechlich verwendeten Apache- und MariaDB-Versionen aus den laufenden Binaries ermittelt und als `versions.json` in die Web-Root geschrieben.
 - Beim Start wird zusaetzlich ein DB-Report ausgegeben: `erstellt (...)`, `bereits vorhanden (...)` oder gemischt.
 - Das paketinterne `ControlGUI.ps1` zeigt Statusmeldungen farblich (OK/INFO/ERR) an.
@@ -251,6 +253,23 @@ Beispiel: `presets/default.json`
     "opensim": "Data Source=localhost;Database=opensim;User ID=opensim;Password=***"
   },
   "web_root": "./Data/http",
+  "extra_components": [
+    {
+      "name": "WordPress",
+      "zip_path": "Components/latest-de_DE.zip",
+      "target_subdir": "wordpress"
+    },
+    {
+      "name": "phpMyAdmin",
+      "zip_path": "Components/phpMyAdmin-5.2.3-all-languages.zip",
+      "target_subdir": "phpmyadmin"
+    },
+    {
+      "name": "oswebinterface",
+      "zip_path": "Components/oswebinterface-main.zip",
+      "target_subdir": "oswebinterface"
+    }
+  ],
   "root_password": "root",
   "portable": true,
   "service": false
@@ -260,8 +279,17 @@ Beispiel: `presets/default.json`
 Hinweis:
 
 - Wenn `apache_zip`/`mariadb_zip` fehlen, versucht der Builder automatische Erkennung in `Components/`.
+- Das Control Center erkennt zusaetzliche `*.zip` in `Components/` (ausser Apache/MariaDB) automatisch als auswaehlbare Zusatz-Components.
+- Ausgewaehlte Zusatz-Components werden beim Build in den Web-Root integriert (`<web_root>/<target_subdir>`).
+- Zusatz-Components werden in den konfigurierten Web-Root entpackt (`<web_root>/<target_subdir>`, standardmaessig `Data/http/<target_subdir>`).
+- Komponentenarchive duerfen nur aus `Components/` geladen werden; Pfade ausserhalb werden abgewiesen.
+- Wenn eine ausgewaehlte Zusatz-Component als WordPress erkannt wird, ergaenzt das Control Center automatisch die Datenbank `wordpress` in der effektiven Build-Konfiguration.
+- Wenn dein Apache-ZIP **kein** `mod_php*.so` mitbringt, wird zusaetzlich ein PHP-ZIP mit `php-cgi.exe` in `Components/` benoetigt (Dateiname mit `php`, aber nicht `phpmyadmin`).
+- Das Apache-ZIP muss PHP auch ausfuehren koennen: entweder `mod_php*.so` oder die Kombination `mod_actions.so` + `mod_cgi.so`.
 - Beim Entpacken werden nur fuer den Betrieb notwendige Runtime-Pfade aus Apache/MariaDB uebernommen (kein Voll-Export des gesamten Archivs).
 - Apache wird auf HTML/PHP-Betrieb reduziert; nicht benoetigte Module und Zusatzverzeichnisse werden entfernt.
+- Die Runtime-`php.ini` wird automatisch erzeugt (inkl. `php_extensions`) und auf notwendige Erweiterungen reduziert.
+- PHP-Sessions/Temp verwenden standardmaessig `runtime/php/tmp` statt `temp/`, damit Session-Dateien nicht durch Release-Cleanup verloren gehen.
 - MariaDB wird ohne Backup/Restore-Werkzeuge ausgeliefert; in `Data/SQL` bleiben nur erforderliche Datenbankstrukturen (z. B. ohne `test`).
 - Nach jedem Build werden `Data/SQL`, `logs/` und `temp/` automatisch bereinigt (Release-Cleanup fuer kleine Paketgroesse).
 - Das SQL-Datadir ist im ausgelieferten Paket absichtlich leer und wird beim ersten Start automatisch neu initialisiert.
@@ -283,8 +311,9 @@ Oder bei abweichender Konfiguration:
 Enthält u. a.:
 
 - `runtime/` (Apache, MariaDB, generated configs)
-- `runtime/apache/htdocs/index.html`
-- `runtime/apache/htdocs/versions.json`
+- `Data/http/versions.json`
+- `runtime/php/php.ini`
+- `runtime/php/tmp/sessions/`
 - `Data/http/index.html`
 - `config/default.config.json`
 - `Start.bat`, `StartHeadless.bat`
@@ -293,7 +322,7 @@ Enthält u. a.:
 
 Hinweis:
 
-- Die ausgelieferte Website wird standardmaessig aus `runtime/apache/htdocs/` bedient.
+- Die ausgelieferte Website wird standardmaessig aus `Data/http/` bedient (DocumentRoot).
 - `versions.json` enthaelt die tatsaechlich beim Start erkannten Apache- und MariaDB-Versionen.
 - `index.html` zeigt zusaetzlich die konfigurierten Datenbanken aus dem Preset/Config an.
 - Das Paket wird nach dem Build fuer den Versand verkleinert; Laufzeitdaten werden erst beim ersten Start erzeugt.
@@ -406,6 +435,16 @@ cargo run --bin mowes-ui
 - Ein leeres `dist/.../Data/SQL/` direkt nach dem Build ist normal (Release-Cleanup).
 - `cargo run --bin mowes-next -- start` erneut ausfuehren.
 - Im Control Center `MariaDB Verbindung testen` verwenden.
+
+### phpMyAdmin meldet Session-Fehler (`session_start`)
+
+- Sicherstellen, dass die Runtime-Pfade existieren:
+  - `dist/<package>/runtime/php/tmp/sessions`
+  - `dist/<package>/runtime/php/tmp/upload`
+- In `dist/<package>/runtime/php/php.ini` pruefen, ob gesetzt ist:
+  - `session.save_path=.../runtime/php/tmp/sessions`
+  - `sys_temp_dir=.../runtime/php/tmp`
+- Server ueber Control Center oder `cargo run --bin mowes-next -- start` neu starten (legt fehlende Ordner automatisch an).
 
 ### Build schlägt fehl
 

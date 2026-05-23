@@ -1,5 +1,6 @@
 use std::fs;
 use std::env;
+use std::collections::HashMap;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
@@ -7,7 +8,12 @@ use std::thread;
 use std::time::Duration;
 
 use eframe::egui;
-use mowes_next::builder::package::{build_from_preset, build_installable_from_preset};
+use mowes_next::builder::package::{
+    build_from_preset,
+    build_installable_from_preset,
+    list_selectable_components,
+    resolve_component_zip_relative_path,
+};
 use mowes_next::core::paths::resolve_package_dir;
 use mowes_next::orchestrator::health::check_health;
 use mowes_next::orchestrator::manager::{start_process, status_process, stop_process};
@@ -33,6 +39,15 @@ struct ServerUiApp {
     status_message: String,
     details: Vec<String>,
     selected_tab: UiTab,
+    extra_components: Vec<UiExtraComponentSelection>,
+}
+
+#[derive(Debug, Clone)]
+struct UiExtraComponentSelection {
+    name: String,
+    zip_path: String,
+    target_subdir: String,
+    selected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +64,7 @@ struct AccessInfo {
 
 impl ServerUiApp {
     fn new(project_root: PathBuf) -> Self {
-        Self {
+        let mut app = Self {
             project_root,
             preset_path: Some(PathBuf::from("presets/default.json")),
             http_port_input: "8080".to_string(),
@@ -58,6 +73,101 @@ impl ServerUiApp {
             status_message: "Ready".to_string(),
             details: Vec::new(),
             selected_tab: UiTab::Build,
+            extra_components: Vec::new(),
+        };
+
+        app.refresh_extra_components();
+        app.apply_extra_components_from_selected_preset();
+        app
+    }
+
+    fn refresh_extra_components(&mut self) {
+        let previous: HashMap<String, UiExtraComponentSelection> = self
+            .extra_components
+            .iter()
+            .map(|item| (item.zip_path.to_ascii_lowercase(), item.clone()))
+            .collect();
+
+        let found = match list_selectable_components(&self.project_root) {
+            Ok(items) => items,
+            Err(_) => {
+                self.extra_components.clear();
+                return;
+            }
+        };
+
+        let mut refreshed: Vec<UiExtraComponentSelection> = Vec::new();
+        for item in found {
+            let key = item.zip_path.to_ascii_lowercase();
+            if let Some(existing) = previous.get(&key) {
+                refreshed.push(UiExtraComponentSelection {
+                    name: item.name,
+                    zip_path: item.zip_path,
+                    target_subdir: existing.target_subdir.clone(),
+                    selected: existing.selected,
+                });
+            } else {
+                refreshed.push(UiExtraComponentSelection {
+                    name: item.name,
+                    zip_path: item.zip_path,
+                    target_subdir: item.default_target_subdir,
+                    selected: false,
+                });
+            }
+        }
+
+        self.extra_components = refreshed;
+    }
+
+    fn apply_extra_components_from_selected_preset(&mut self) {
+        for item in &mut self.extra_components {
+            item.selected = false;
+        }
+
+        let Some(path) = &self.preset_path else {
+            return;
+        };
+
+        let raw = match fs::read_to_string(path) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let preset: Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let Some(list) = preset
+            .get("extra_components")
+            .and_then(Value::as_array)
+        else {
+            return;
+        };
+
+        for entry in list {
+            let zip_path = entry
+                .get("zip_path")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if zip_path.is_empty() {
+                continue;
+            }
+
+            if let Some(component) = self
+                .extra_components
+                .iter_mut()
+                .find(|c| c.zip_path.to_ascii_lowercase() == zip_path)
+            {
+                component.selected = true;
+                if let Some(target_subdir) = entry
+                    .get("target_subdir")
+                    .and_then(Value::as_str)
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty())
+                {
+                    component.target_subdir = target_subdir.to_string();
+                }
+            }
         }
     }
 
@@ -81,6 +191,8 @@ impl ServerUiApp {
             self.details.push(format!("MariaDB PID: {:?}", mariadb.pid));
         }
 
+        self.details.push(self.php_status_line());
+
         if let Ok(service) = service_status(&self.project_root) {
             self.details.push(format!("Service mode: {} ({})", service.configured, service.details));
         }
@@ -100,6 +212,22 @@ impl ServerUiApp {
                 self.details.push(format!("MariaDB Datenbanken (konfiguriert): {}", access.db_names.join(", ")));
             }
         }
+    }
+
+    fn php_status_line(&self) -> String {
+        let package = self.active_package_dir();
+        let php_root = package.join("runtime").join("php");
+        let php_cgi = php_root.join("php-cgi.exe");
+        let php_ini = php_root.join("php.ini");
+        let mysqli_dll = php_root.join("ext").join("php_mysqli.dll");
+
+        if !php_cgi.exists() {
+            return "PHP: false (php-cgi.exe fehlt)".to_string();
+        }
+
+        let ini_state = if php_ini.exists() { "ok" } else { "fehlt" };
+        let mysqli_state = if mysqli_dll.exists() { "ok" } else { "fehlt" };
+        format!("PHP: true (php-cgi.exe ok, php.ini: {ini_state}, mysqli: {mysqli_state})")
     }
 
     fn active_package_dir(&self) -> PathBuf {
@@ -304,8 +432,8 @@ impl ServerUiApp {
     }
 
     fn write_runtime_versions_file(package: &std::path::Path, apache_version: &str, mariadb_version: &str) -> Result<(), String> {
-        let htdocs = package.join("runtime").join("apache").join("htdocs");
-        fs::create_dir_all(&htdocs).map_err(|e| format!("htdocs create failed: {e}"))?;
+        let web_root = package.join("Data").join("http");
+        fs::create_dir_all(&web_root).map_err(|e| format!("web root create failed: {e}"))?;
 
         let payload = json!({
             "apache": apache_version,
@@ -314,7 +442,7 @@ impl ServerUiApp {
 
         let body = serde_json::to_string_pretty(&payload)
             .map_err(|e| format!("serialize versions failed: {e}"))?;
-        fs::write(htdocs.join("versions.json"), body)
+        fs::write(web_root.join("versions.json"), body)
             .map_err(|e| format!("write versions.json failed: {e}"))?;
 
         Ok(())
@@ -421,6 +549,14 @@ impl ServerUiApp {
         obj.insert("http_port".to_string(), json!(http_port));
         obj.insert("db_port".to_string(), json!(db_port));
 
+        if let Some(apache_zip) = resolve_component_zip_relative_path(&self.project_root, &["apache", "httpd"]) {
+            obj.insert("apache_zip".to_string(), json!(apache_zip));
+        }
+
+        if let Some(mariadb_zip) = resolve_component_zip_relative_path(&self.project_root, &["mariadb"]) {
+            obj.insert("mariadb_zip".to_string(), json!(mariadb_zip));
+        }
+
         let output_base = if self.output_base_dir.is_absolute() {
             self.output_base_dir.clone()
         } else {
@@ -430,6 +566,60 @@ impl ServerUiApp {
             "output_base_dir".to_string(),
             json!(output_base.display().to_string()),
         );
+
+        let mut selected_extra_components: Vec<Value> = Vec::new();
+        for component in self.extra_components.iter().filter(|component| component.selected) {
+            let normalized_target = Self::normalize_target_subdir(&component.target_subdir)
+                .map_err(|reason| format!("Ungueltiger Zielordner fuer {}: {reason}", component.name))?;
+
+            selected_extra_components.push(json!({
+                "name": component.name,
+                "zip_path": component.zip_path,
+                "target_subdir": normalized_target,
+            }));
+        }
+        if !selected_extra_components.is_empty() {
+            obj.insert(
+                "extra_components".to_string(),
+                Value::Array(selected_extra_components),
+            );
+        }
+
+        if self
+            .extra_components
+            .iter()
+            .any(|component| component.selected && Self::is_wordpress_component(component))
+        {
+            if !obj
+                .get("database_name")
+                .and_then(Value::as_str)
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false)
+            {
+                obj.insert("database_name".to_string(), json!("wordpress"));
+            }
+
+            let mut db_names: Vec<String> = obj
+                .get("database_names")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                        .collect::<Vec<String>>()
+                })
+                .unwrap_or_default();
+
+            if !db_names.iter().any(|name| name.eq_ignore_ascii_case("wordpress")) {
+                db_names.push("wordpress".to_string());
+            }
+
+            if !db_names.is_empty() {
+                obj.insert("database_names".to_string(), json!(db_names));
+            }
+        }
 
         let temp_dir = self.project_root.join("temp").join("control-center");
         fs::create_dir_all(&temp_dir).map_err(|e| format!("Cannot create temp dir: {e}"))?;
@@ -558,6 +748,10 @@ impl ServerUiApp {
 
     fn start_server(&mut self) {
         let package = self.active_package_dir();
+        if let Err(err) = Self::ensure_php_runtime_temp_dirs(&package) {
+            self.status_message = format!("PHP-Tempordner konnten nicht angelegt werden: {err}");
+            return;
+        }
         let pids = self.pid_dir();
         let mariadb_ini = package.join("runtime").join("generated").join("my.generated.ini");
         let mariadb_data = package.join("Data").join("SQL");
@@ -637,6 +831,13 @@ impl ServerUiApp {
             (Err(err), _) | (_, Err(err)) => self.status_message = format!("Start failed: {err}"),
         }
         self.refresh_overview();
+    }
+
+    fn ensure_php_runtime_temp_dirs(package: &std::path::Path) -> std::io::Result<()> {
+        let php_tmp = package.join("runtime").join("php").join("tmp");
+        fs::create_dir_all(php_tmp.join("sessions"))?;
+        fs::create_dir_all(php_tmp.join("upload"))?;
+        Ok(())
     }
 
     fn ensure_configured_databases(package: &std::path::Path) -> Result<String, String> {
@@ -903,6 +1104,7 @@ impl ServerUiApp {
             if ui.button("Select preset").clicked() {
                 if let Some(path) = FileDialog::new().add_filter("JSON", &["json"]).pick_file() {
                     self.preset_path = Some(path);
+                    self.apply_extra_components_from_selected_preset();
                 }
             }
             if let Some(path) = &self.preset_path {
@@ -933,6 +1135,45 @@ impl ServerUiApp {
             }
             ui.label(format!("Dist-Export: {}", self.output_base_dir.display()));
         });
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.button("Components neu laden").clicked() {
+                self.refresh_extra_components();
+                self.apply_extra_components_from_selected_preset();
+            }
+            ui.label("Zusatzpakete aus Components (ZIP)");
+        });
+
+        if self.extra_components.is_empty() {
+            ui.label("Keine zusaetzlichen ZIP-Components in Components gefunden.");
+        } else {
+            for component in &mut self.extra_components {
+                ui.horizontal(|ui| {
+                    ui.checkbox(
+                        &mut component.selected,
+                        format!("{} ({})", component.name, component.zip_path),
+                    );
+                    ui.label("Zielordner:");
+                    ui.text_edit_singleline(&mut component.target_subdir);
+
+                    if component.selected {
+                        let (status_text, status_color) =
+                            match Self::normalize_target_subdir(&component.target_subdir) {
+                                Ok(normalized) => (
+                                    format!("ok: /{}", normalized),
+                                    egui::Color32::from_rgb(34, 197, 94),
+                                ),
+                                Err(reason) => (
+                                    format!("ungueltig: {reason}"),
+                                    egui::Color32::from_rgb(239, 68, 68),
+                                ),
+                            };
+                        ui.colored_label(status_color, status_text);
+                    }
+                });
+            }
+        }
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -1000,6 +1241,48 @@ impl ServerUiApp {
                 self.refresh_overview();
             }
         });
+    }
+
+    fn normalize_target_subdir(value: &str) -> Result<String, String> {
+        let mut parts: Vec<String> = Vec::new();
+        for part in value.split(['/', '\\']) {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if trimmed == "." || trimmed == ".." {
+                return Err("enthaelt unzulaessige Pfadteile ('.' oder '..')".to_string());
+            }
+
+            let valid = trimmed
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+            if !valid {
+                return Err(
+                    "nur Buchstaben, Zahlen, '-', '_' und '.' sind erlaubt".to_string(),
+                );
+            }
+
+            parts.push(trimmed.to_string());
+        }
+
+        if parts.is_empty() {
+            return Err("darf nicht leer sein".to_string());
+        }
+
+        Ok(parts.join("/"))
+    }
+
+    fn is_wordpress_component(component: &UiExtraComponentSelection) -> bool {
+        let haystack = format!(
+            "{} {} {}",
+            component.name,
+            component.zip_path,
+            component.target_subdir
+        )
+        .to_ascii_lowercase();
+        haystack.contains("wordpress")
     }
 }
 

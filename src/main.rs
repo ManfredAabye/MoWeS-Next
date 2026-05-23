@@ -132,6 +132,10 @@ fn run_build_installable_preset(project_root: &Path, preset_arg: Option<&String>
 fn run_start(project_root: &Path) {
     let package = package_root(project_root);
     let pids = pid_dir(project_root);
+    if let Err(err) = ensure_php_runtime_temp_dirs(&package) {
+        eprintln!("PHP-Tempordner konnten nicht angelegt werden: {err}");
+        std::process::exit(2);
+    }
     let mariadb_ini = package.join("runtime").join("generated").join("my.generated.ini");
     let mariadb_data = package.join("Data").join("SQL");
     let mariadb_log = package.join("logs").join("mariadb-error.log");
@@ -214,6 +218,13 @@ fn run_start(project_root: &Path) {
     run_status(project_root);
 }
 
+fn ensure_php_runtime_temp_dirs(package: &Path) -> io::Result<()> {
+    let php_tmp = package.join("runtime").join("php").join("tmp");
+    fs::create_dir_all(php_tmp.join("sessions"))?;
+    fs::create_dir_all(php_tmp.join("upload"))?;
+    Ok(())
+}
+
 fn find_first_existing(base: &Path, candidates: &[&str]) -> Option<PathBuf> {
     for rel in candidates {
         let p = base.join(rel);
@@ -244,8 +255,8 @@ fn detect_binary_version(exe: &Path, args: &[&str]) -> String {
 }
 
 fn write_runtime_versions_file(package: &Path, apache_version: &str, mariadb_version: &str) -> Result<(), String> {
-    let htdocs = package.join("runtime").join("apache").join("htdocs");
-    fs::create_dir_all(&htdocs).map_err(|e| format!("htdocs create failed: {e}"))?;
+    let web_root = package.join("Data").join("http");
+    fs::create_dir_all(&web_root).map_err(|e| format!("web root create failed: {e}"))?;
 
     let payload = json!({
         "apache": apache_version,
@@ -254,7 +265,7 @@ fn write_runtime_versions_file(package: &Path, apache_version: &str, mariadb_ver
 
     let body = serde_json::to_string_pretty(&payload)
         .map_err(|e| format!("serialize versions failed: {e}"))?;
-    fs::write(htdocs.join("versions.json"), body)
+    fs::write(web_root.join("versions.json"), body)
         .map_err(|e| format!("write versions.json failed: {e}"))?;
 
     Ok(())

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 use zip::ZipArchive;
@@ -13,6 +13,10 @@ use crate::core::logging::JsonLogger;
 use crate::core::ports::find_free_port;
 
 const DEFAULT_PACKAGE_NAME: &str = "mowes-next-package";
+const PHP_CONFIG_BEGIN_MARKER: &str = "# MOWES_PHP_BEGIN";
+const PHP_CONFIG_END_MARKER: &str = "# MOWES_PHP_END";
+const WEBROOT_CONFIG_BEGIN_MARKER: &str = "# MOWES_WEBROOT_BEGIN";
+const WEBROOT_CONFIG_END_MARKER: &str = "# MOWES_WEBROOT_END";
 
 #[derive(Debug, Clone)]
 pub struct PackageSummary {
@@ -33,8 +37,20 @@ pub struct InstallableSummary {
 pub enum BuilderError {
     #[error("io error: {0}")]
     Io(#[from] io::Error),
+    #[error("io error during {action}: {path}: {source}")]
+    IoPath {
+        action: &'static str,
+        path: String,
+        #[source]
+        source: io::Error,
+    },
     #[error("zip error: {0}")]
     Zip(String),
+    #[error("component archive must be inside Components: {component}: {path}")]
+    ComponentOutsideComponents {
+        component: String,
+        path: String,
+    },
     #[error("components directory missing: {0}")]
     ComponentsDirMissing(String),
     #[error("apache zip not found in Components")]
@@ -46,6 +62,8 @@ pub enum BuilderError {
         component: &'static str,
         required: Vec<&'static str>,
     },
+    #[error("php runtime required: {0}")]
+    PhpRuntimeRequired(String),
 }
 
 #[derive(Debug, Serialize)]
@@ -65,9 +83,9 @@ pub fn build_from_components(project_root: &Path) -> Result<PackageSummary, Buil
         ));
     }
 
-    let apache_zip = find_component_zip(&components_dir, "apache")
+    let apache_zip = find_component_zip_by_any(&components_dir, &["apache", "httpd"])
         .ok_or(BuilderError::ApacheZipMissing)?;
-    let mariadb_zip = find_component_zip(&components_dir, "mariadb")
+    let mariadb_zip = find_component_zip_by_any(&components_dir, &["mariadb"])
         .ok_or(BuilderError::MariaDbZipMissing)?;
 
     validate_zip_contains_any(
@@ -95,10 +113,7 @@ pub fn build_from_components(project_root: &Path) -> Result<PackageSummary, Buil
     let db_port = find_free_port(3306)?;
 
     let output_dir = project_root.join("dist").join(DEFAULT_PACKAGE_NAME);
-    if output_dir.exists() {
-        fs::remove_dir_all(&output_dir)?;
-    }
-    fs::create_dir_all(&output_dir)?;
+    reset_output_target_dir(&output_dir)?;
 
     for dir in ["config", "Data/http", "Data/SQL", "logs", "temp"] {
         fs::create_dir_all(output_dir.join(dir))?;
@@ -107,6 +122,7 @@ pub fn build_from_components(project_root: &Path) -> Result<PackageSummary, Buil
     let runtime_dir = output_dir.join("runtime");
     let apache_target = runtime_dir.join("apache");
     let mariadb_target = runtime_dir.join("mariadb");
+    let php_target = runtime_dir.join("php");
 
     extract_runtime_component(&apache_zip, &apache_target, "apache")?;
     extract_runtime_component(&mariadb_zip, &mariadb_target, "mariadb")?;
@@ -114,6 +130,9 @@ pub fn build_from_components(project_root: &Path) -> Result<PackageSummary, Buil
     normalize_component_layout(&mariadb_target, &["bin/mariadbd.exe", "mariadbd.exe", "bin/mysqld.exe", "mysqld.exe"])?;
     compact_component_runtime(&apache_target, "apache")?;
     compact_component_runtime(&mariadb_target, "mariadb")?;
+    if !has_mod_php_module_in_apache_root(&apache_target) {
+        attach_php_runtime(project_root, &php_target, None)?;
+    }
     ensure_apache_runtime_layout(&apache_target)?;
 
     validate_runtime_binaries(
@@ -126,6 +145,12 @@ pub fn build_from_components(project_root: &Path) -> Result<PackageSummary, Buil
         "MariaDB",
         &["bin/mariadbd.exe", "mariadbd.exe", "bin/mysqld.exe", "mysqld.exe"],
     )?;
+
+    if !has_php_runtime(&output_dir) {
+        return Err(BuilderError::PhpRuntimeRequired(
+            "Apache hat kein mod_php und es wurde keine PHP-CGI-Runtime gefunden. Lege ein PHP-ZIP mit php-cgi.exe in Components/ ab (z. B. php-8.x-Win32-vsXX-x64.zip) oder nutze ein Apache-ZIP mit mod_php*.so.".to_string(),
+        ));
+    }
 
     write_default_config(
         &output_dir,
@@ -142,16 +167,16 @@ pub fn build_from_components(project_root: &Path) -> Result<PackageSummary, Buil
     let apache_version = component_version_from_zip(&apache_zip);
     let mariadb_version = component_version_from_zip(&mariadb_zip);
     write_welcome_page(
+        project_root,
         &output_dir,
-        &runtime_dir,
         None,
         None,
         &version,
         &apache_version,
         &mariadb_version,
     )?;
-    write_runtime_templates(&output_dir, http_port, db_port)?;
-    patch_apache_httpd_conf(&output_dir, http_port)?;
+    write_runtime_templates(&output_dir, http_port, db_port, None)?;
+    patch_apache_httpd_conf(&output_dir, http_port, None)?;
     write_launchers(&output_dir)?;
     write_control_gui(&output_dir)?;
     write_third_party_notices(&output_dir)?;
@@ -178,7 +203,20 @@ pub fn build_from_components(project_root: &Path) -> Result<PackageSummary, Buil
 }
 
 // --- Preset-Unterstützung ---
-use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExtraComponentPreset {
+    pub name: String,
+    pub zip_path: String,
+    pub target_subdir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SelectableComponent {
+    pub name: String,
+    pub zip_path: String,
+    pub default_target_subdir: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct BuildPreset {
@@ -197,21 +235,31 @@ pub struct BuildPreset {
     pub database_names: Option<Vec<String>>,
     pub database_connections: Option<HashMap<String, String>>,
     pub web_root: Option<String>,
+    pub extra_components: Option<Vec<ExtraComponentPreset>>,
 }
 
 pub fn build_from_preset(project_root: &Path, preset_path: &Path) -> Result<PackageSummary, BuilderError> {
-    let preset_file = std::fs::File::open(preset_path)?;
+    let preset_file = open_file_with_context(preset_path, "opening preset file")?;
     let preset: BuildPreset = serde_json::from_reader(preset_file)
         .map_err(|e| BuilderError::Zip(format!("invalid preset: {e}")))?;
 
-    let apache_zip = preset.apache_zip
-        .map(|p| project_root.join(p))
-        .or_else(|| find_component_zip(&project_root.join("Components"), "apache"))
-        .ok_or(BuilderError::ApacheZipMissing)?;
-    let mariadb_zip = preset.mariadb_zip
-        .map(|p| project_root.join(p))
-        .or_else(|| find_component_zip(&project_root.join("Components"), "mariadb"))
-        .ok_or(BuilderError::MariaDbZipMissing)?;
+    let components_dir = project_root.join("Components");
+    let apache_zip = resolve_component_zip_from_preset(
+        project_root,
+        preset.apache_zip.as_deref(),
+        &components_dir,
+        "apache",
+        &["apache", "httpd"],
+    )?
+    .ok_or(BuilderError::ApacheZipMissing)?;
+    let mariadb_zip = resolve_component_zip_from_preset(
+        project_root,
+        preset.mariadb_zip.as_deref(),
+        &components_dir,
+        "mariadb",
+        &["mariadb"],
+    )?
+    .ok_or(BuilderError::MariaDbZipMissing)?;
 
     validate_zip_contains_any(&apache_zip, "Apache", &["bin/httpd.exe", "httpd.exe"])?;
     validate_zip_contains_any(&mariadb_zip, "MariaDB", &["bin/mariadbd.exe", "mariadbd.exe", "bin/mysqld.exe", "mysqld.exe"])?;
@@ -233,25 +281,34 @@ pub fn build_from_preset(project_root: &Path, preset_path: &Path) -> Result<Pack
 
     let output_base_dir = resolve_output_base_dir(project_root, preset.output_base_dir.as_deref());
     let output_dir = output_base_dir.join(&package_name);
-    if output_dir.exists() {
-        fs::remove_dir_all(&output_dir)?;
-    }
-    fs::create_dir_all(&output_dir)?;
+    reset_output_target_dir(&output_dir)?;
     for dir in ["config", "Data/http", "Data/SQL", "logs", "temp"] {
         fs::create_dir_all(output_dir.join(dir))?;
     }
     let runtime_dir = output_dir.join("runtime");
     let apache_target = runtime_dir.join("apache");
     let mariadb_target = runtime_dir.join("mariadb");
+    let php_target = runtime_dir.join("php");
     extract_runtime_component(&apache_zip, &apache_target, "apache")?;
     extract_runtime_component(&mariadb_zip, &mariadb_target, "mariadb")?;
     normalize_component_layout(&apache_target, &["bin/httpd.exe", "httpd.exe"])?;
     normalize_component_layout(&mariadb_target, &["bin/mariadbd.exe", "mariadbd.exe", "bin/mysqld.exe", "mysqld.exe"])?;
+
+    if !has_mod_php_module_in_apache_root(&apache_target) {
+        attach_php_runtime(project_root, &php_target, preset.php_extensions.as_deref())?;
+    }
+
     compact_component_runtime(&apache_target, "apache")?;
     compact_component_runtime(&mariadb_target, "mariadb")?;
     ensure_apache_runtime_layout(&apache_target)?;
     validate_runtime_binaries(&apache_target, "Apache", &["bin/httpd.exe", "httpd.exe"])?;
     validate_runtime_binaries(&mariadb_target, "MariaDB", &["bin/mariadbd.exe", "mariadbd.exe", "bin/mysqld.exe", "mysqld.exe"])?;
+
+    if !has_php_runtime(&output_dir) {
+        return Err(BuilderError::PhpRuntimeRequired(
+            "Apache hat kein mod_php und es wurde keine PHP-CGI-Runtime gefunden. Lege ein PHP-ZIP mit php-cgi.exe in Components/ ab (z. B. php-8.x-Win32-vsXX-x64.zip) oder nutze ein Apache-ZIP mit mod_php*.so.".to_string(),
+        ));
+    }
 
     let mut configured_database_names: Vec<String> = Vec::new();
     if let Some(name) = preset.database_name.as_ref() {
@@ -281,16 +338,24 @@ pub fn build_from_preset(project_root: &Path, preset_path: &Path) -> Result<Pack
     let apache_version = component_version_from_zip(&apache_zip);
     let mariadb_version = component_version_from_zip(&mariadb_zip);
     write_welcome_page(
+        project_root,
         &output_dir,
-        &runtime_dir,
         preset.web_root.as_deref(),
         Some(configured_database_names.as_slice()),
         &version,
         &apache_version,
         &mariadb_version,
     )?;
-    write_runtime_templates(&output_dir, http_port, db_port)?;
-    patch_apache_httpd_conf(&output_dir, http_port)?;
+    if let Some(extra_components) = preset.extra_components.as_ref() {
+        apply_extra_web_components(
+            project_root,
+            &output_dir,
+            preset.web_root.as_deref(),
+            extra_components,
+        )?;
+    }
+    write_runtime_templates(&output_dir, http_port, db_port, preset.php_extensions.as_deref())?;
+    patch_apache_httpd_conf(&output_dir, http_port, preset.web_root.as_deref())?;
     write_launchers(&output_dir)?;
     write_control_gui(&output_dir)?;
     write_third_party_notices(&output_dir)?;
@@ -390,15 +455,69 @@ pub fn detect_components(project_root: &Path) -> Result<(PathBuf, PathBuf), Buil
         ));
     }
 
-    let apache_zip = find_component_zip(&components_dir, "apache")
+    let apache_zip = find_component_zip_by_any(&components_dir, &["apache", "httpd"])
         .ok_or(BuilderError::ApacheZipMissing)?;
-    let mariadb_zip = find_component_zip(&components_dir, "mariadb")
+    let mariadb_zip = find_component_zip_by_any(&components_dir, &["mariadb"])
         .ok_or(BuilderError::MariaDbZipMissing)?;
 
     Ok((apache_zip, mariadb_zip))
 }
 
-fn find_component_zip(components_dir: &Path, needle: &str) -> Option<PathBuf> {
+pub fn list_selectable_components(project_root: &Path) -> Result<Vec<SelectableComponent>, BuilderError> {
+    let components_dir = project_root.join("Components");
+    if !components_dir.exists() {
+        return Err(BuilderError::ComponentsDirMissing(
+            components_dir.display().to_string(),
+        ));
+    }
+
+    let mut items: Vec<SelectableComponent> = Vec::new();
+
+    for entry in fs::read_dir(&components_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        if path
+            .extension()
+            .and_then(|v| v.to_str())
+            .map(|v| v.eq_ignore_ascii_case("zip"))
+            != Some(true)
+        {
+            continue;
+        }
+
+        let file_name = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let lower_name = file_name.to_ascii_lowercase();
+        if lower_name.contains("apache") || lower_name.contains("httpd") || lower_name.contains("mariadb") {
+            continue;
+        }
+        if lower_name.contains("php") && !lower_name.contains("phpmyadmin") {
+            continue;
+        }
+
+        let name = component_display_name_from_filename(&file_name);
+        let default_target_subdir = default_target_subdir_for_component(&name, &file_name);
+        let zip_path = format!("Components/{file_name}");
+
+        items.push(SelectableComponent {
+            name,
+            zip_path,
+            default_target_subdir,
+        });
+    }
+
+    items.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    Ok(items)
+}
+
+pub fn find_component_zip_by_any(components_dir: &Path, needles: &[&str]) -> Option<PathBuf> {
     let mut matches = Vec::new();
 
     let entries = fs::read_dir(components_dir).ok()?;
@@ -423,7 +542,7 @@ fn find_component_zip(components_dir: &Path, needle: &str) -> Option<PathBuf> {
             .unwrap_or_default()
             .to_ascii_lowercase();
 
-        if lower_name.contains(needle) {
+        if needles.iter().any(|needle| lower_name.contains(needle)) {
             let modified = fs::metadata(&path)
                 .and_then(|m| m.modified())
                 .unwrap_or(SystemTime::UNIX_EPOCH);
@@ -435,12 +554,19 @@ fn find_component_zip(components_dir: &Path, needle: &str) -> Option<PathBuf> {
     matches.pop().map(|(_, p)| p)
 }
 
+pub fn resolve_component_zip_relative_path(project_root: &Path, needles: &[&str]) -> Option<String> {
+    let components_dir = project_root.join("Components");
+    let path = find_component_zip_by_any(&components_dir, needles)?;
+    let file_name = path.file_name()?.to_str()?;
+    Some(format!("Components/{file_name}"))
+}
+
 fn validate_zip_contains_any(
     zip_path: &Path,
     component: &'static str,
     required_candidates: &[&'static str],
 ) -> Result<(), BuilderError> {
-    let file = fs::File::open(zip_path)?;
+    let file = open_file_with_context(zip_path, "opening component archive")?;
     let mut archive = ZipArchive::new(file).map_err(|err| BuilderError::Zip(err.to_string()))?;
     let names = collect_zip_file_names(&mut archive)?;
 
@@ -485,7 +611,7 @@ fn extract_runtime_component(
 ) -> Result<(), BuilderError> {
     fs::create_dir_all(target_dir)?;
 
-    let file = fs::File::open(zip_path)?;
+    let file = open_file_with_context(zip_path, "opening component archive")?;
     let mut archive = ZipArchive::new(file).map_err(|err| BuilderError::Zip(err.to_string()))?;
 
     for i in 0..archive.len() {
@@ -538,6 +664,57 @@ fn map_runtime_component_path(component: &str, zip_path: &Path) -> Option<PathBu
         .position(|part| anchors.iter().any(|anchor| part.eq_ignore_ascii_case(anchor)))?;
 
     Some(PathBuf::from(parts[start_idx..].join("/")))
+}
+
+fn open_file_with_context(path: &Path, action: &'static str) -> Result<fs::File, BuilderError> {
+    fs::File::open(path).map_err(|source| BuilderError::IoPath {
+        action,
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+fn is_components_relative_path(path: &Path) -> bool {
+    let mut parts = path.components();
+    match parts.next() {
+        Some(std::path::Component::Normal(first)) if first.to_string_lossy().eq_ignore_ascii_case("Components") => {}
+        _ => return false,
+    }
+
+    parts.all(|part| matches!(part, std::path::Component::Normal(_)))
+}
+
+fn resolve_components_scoped_path(
+    project_root: &Path,
+    configured: &str,
+    component: &str,
+) -> Result<PathBuf, BuilderError> {
+    let candidate = PathBuf::from(configured);
+    if candidate.is_absolute() || !is_components_relative_path(&candidate) {
+        return Err(BuilderError::ComponentOutsideComponents {
+            component: component.to_string(),
+            path: configured.to_string(),
+        });
+    }
+
+    Ok(project_root.join(candidate))
+}
+
+fn resolve_component_zip_from_preset(
+    project_root: &Path,
+    configured: Option<&str>,
+    components_dir: &Path,
+    component: &str,
+    needles: &[&str],
+) -> Result<Option<PathBuf>, BuilderError> {
+    if let Some(path) = configured {
+        let resolved = resolve_components_scoped_path(project_root, path, component)?;
+        if resolved.exists() {
+            return Ok(Some(resolved));
+        }
+    }
+
+    Ok(find_component_zip_by_any(components_dir, needles))
 }
 
 fn validate_runtime_binaries(
@@ -628,6 +805,20 @@ fn compact_component_runtime(component_root: &Path, component: &str) -> Result<(
 
     if component.eq_ignore_ascii_case("apache") {
         for rel in ["htdocs/manual", "include", "cgi-bin", "manual", "icons", "error"] {
+            remove_path_if_exists(&component_root.join(rel))?;
+        }
+        for rel in [
+            "conf/original",
+            "bin/ab.exe",
+            "bin/abs.exe",
+            "bin/ApacheMonitor.exe",
+            "bin/htcacheclean.exe",
+            "bin/openssl.exe",
+            "bin/curl.exe",
+            "bin/xmllint.exe",
+            "bin/xmlwf.exe",
+            "bin/luac.exe",
+        ] {
             remove_path_if_exists(&component_root.join(rel))?;
         }
         prune_apache_modules_for_html_php(component_root)?;
@@ -721,10 +912,12 @@ fn prune_apache_modules_for_html_php(component_root: &Path) -> Result<(), Builde
 
     let keep = [
         "mod_access_compat.so",
+        "mod_actions.so",
         "mod_alias.so",
         "mod_authn_core.so",
         "mod_authz_core.so",
         "mod_authz_host.so",
+        "mod_cgi.so",
         "mod_dir.so",
         "mod_env.so",
         "mod_headers.so",
@@ -879,7 +1072,12 @@ fn write_default_config(
     Ok(())
 }
 
-fn write_runtime_templates(output_dir: &Path, http_port: u16, db_port: u16) -> Result<(), BuilderError> {
+fn write_runtime_templates(
+    output_dir: &Path,
+    http_port: u16,
+    db_port: u16,
+    php_extensions: Option<&[String]>,
+) -> Result<(), BuilderError> {
     let generated_dir = output_dir.join("runtime").join("generated");
     fs::create_dir_all(&generated_dir)?;
 
@@ -893,15 +1091,68 @@ fn write_runtime_templates(output_dir: &Path, http_port: u16, db_port: u16) -> R
         db_port
     );
 
-    let php_ini = "[PHP]\nengine=On\nshort_open_tag=Off\nmax_execution_time=60\ndate.timezone=UTC\n";
+    let php_tmp_root = output_dir.join("runtime").join("php").join("tmp");
+    let php_session_dir = php_tmp_root.join("sessions");
+    let php_upload_dir = php_tmp_root.join("upload");
+    fs::create_dir_all(&php_session_dir)?;
+    fs::create_dir_all(&php_upload_dir)?;
+
+    let php_ini = build_runtime_php_ini_with_runtime_paths(output_dir, php_extensions);
 
     fs::write(generated_dir.join("httpd.generated.conf"), apache_conf)?;
     fs::write(generated_dir.join("my.generated.ini"), mariadb_ini)?;
     fs::write(generated_dir.join("php.generated.ini"), php_ini)?;
+    let php_runtime_dir = output_dir.join("runtime").join("php");
+    if php_runtime_dir.exists() {
+        fs::write(php_runtime_dir.join("php.ini"), build_runtime_php_ini_with_runtime_paths(output_dir, php_extensions))?;
+    }
     Ok(())
 }
 
-fn patch_apache_httpd_conf(output_dir: &Path, http_port: u16) -> Result<(), BuilderError> {
+fn build_runtime_php_ini_with_runtime_paths(output_dir: &Path, php_extensions: Option<&[String]>) -> String {
+    let php_tmp_root = output_dir.join("runtime").join("php").join("tmp");
+    let php_session_dir = php_tmp_root.join("sessions");
+    let php_upload_dir = php_tmp_root.join("upload");
+
+    let mut php_ini = build_runtime_php_ini(php_extensions);
+    php_ini.push_str("session.save_handler=files\n");
+    php_ini.push_str(&format!(
+        "session.save_path=\"{}\"\n",
+        php_session_dir.to_string_lossy().replace('\\', "/")
+    ));
+    php_ini.push_str(&format!(
+        "sys_temp_dir=\"{}\"\n",
+        php_tmp_root.to_string_lossy().replace('\\', "/")
+    ));
+    php_ini.push_str(&format!(
+        "upload_tmp_dir=\"{}\"\n",
+        php_upload_dir.to_string_lossy().replace('\\', "/")
+    ));
+    php_ini
+}
+
+fn build_runtime_php_ini(php_extensions: Option<&[String]>) -> String {
+    let mut php_ini = String::from(
+        "[PHP]\nengine=On\nshort_open_tag=Off\nmax_execution_time=60\ndate.timezone=UTC\nextension_dir=\"ext\"\n",
+    );
+
+    let mut seen: Vec<String> = Vec::new();
+    if let Some(extensions) = php_extensions {
+        for extension in extensions {
+            let normalized = extension.trim().to_ascii_lowercase();
+            if normalized.is_empty() || seen.iter().any(|value| value == &normalized) {
+                continue;
+            }
+
+            seen.push(normalized.clone());
+            php_ini.push_str(&format!("extension={}\n", normalized));
+        }
+    }
+
+    php_ini
+}
+
+fn patch_apache_httpd_conf(output_dir: &Path, http_port: u16, web_root: Option<&str>) -> Result<(), BuilderError> {
     let conf_path = output_dir
         .join("runtime")
         .join("apache")
@@ -917,14 +1168,37 @@ fn patch_apache_httpd_conf(output_dir: &Path, http_port: u16) -> Result<(), Buil
         .join("apache")
         .to_string_lossy()
         .replace('\\', "/");
+    let package_web_root = resolve_package_web_root(output_dir, web_root)
+        .to_string_lossy()
+        .replace('\\', "/");
 
     let input = fs::read_to_string(&conf_path)?;
+    let input = strip_managed_webroot_block(&strip_managed_php_block(&input));
     let mut output = String::with_capacity(input.len() + 64);
     let mut replaced_server_root = false;
     let mut replaced_listen = false;
+    let mut replaced_document_root = false;
+    let mut replaced_htdocs_directory = false;
+    let has_mod_actions_file = output_dir
+        .join("runtime")
+        .join("apache")
+        .join("modules")
+        .join("mod_actions.so")
+        .exists();
+    let has_mod_cgi_file = output_dir
+        .join("runtime")
+        .join("apache")
+        .join("modules")
+        .join("mod_cgi.so")
+        .exists();
+    let php_cgi_rel = find_existing_relative_path(
+        output_dir,
+        &["runtime/php/php-cgi.exe", "runtime/apache/bin/php-cgi.exe"],
+    );
 
     for line in input.lines() {
         let trimmed = line.trim_start();
+        let uncommented = trimmed.trim_start_matches('#').trim_start();
         if !replaced_server_root && trimmed.starts_with("Define SRVROOT ") {
             output.push_str(&format!("Define SRVROOT \"{}\"\n", server_root));
             replaced_server_root = true;
@@ -937,15 +1211,40 @@ fn patch_apache_httpd_conf(output_dir: &Path, http_port: u16) -> Result<(), Buil
             continue;
         }
 
-        if let Some(module_file) = load_module_file_from_line(trimmed) {
+        if !replaced_document_root
+            && trimmed.starts_with("DocumentRoot ")
+            && trimmed.contains("${SRVROOT}/htdocs")
+        {
+            output.push_str(&format!("DocumentRoot \"{package_web_root}\"\n"));
+            replaced_document_root = true;
+            continue;
+        }
+
+        if !replaced_htdocs_directory
+            && trimmed.starts_with("<Directory ")
+            && trimmed.contains("${SRVROOT}/htdocs")
+        {
+            output.push_str(&format!("<Directory \"{package_web_root}\">\n"));
+            replaced_htdocs_directory = true;
+            continue;
+        }
+
+        if let Some((module_name, module_file)) = parse_load_module_line(uncommented) {
             let module_path = output_dir
                 .join("runtime")
                 .join("apache")
                 .join(module_file.replace('/', "\\"));
             if !module_path.exists() {
                 output.push('#');
-                output.push_str(line);
+                output.push_str(uncommented);
                 output.push('\n');
+                continue;
+            }
+
+            let force_enable_module = module_file.eq_ignore_ascii_case("modules/mod_actions.so")
+                || module_file.eq_ignore_ascii_case("modules/mod_cgi.so");
+            if force_enable_module {
+                output.push_str(&format!("LoadModule {module_name} {module_file}\n"));
                 continue;
             }
         }
@@ -961,8 +1260,366 @@ fn patch_apache_httpd_conf(output_dir: &Path, http_port: u16) -> Result<(), Buil
         output.push_str(&format!("Listen {}\n", http_port));
     }
 
+    output.push_str(&format!("{WEBROOT_CONFIG_BEGIN_MARKER}\n"));
+    output.push_str(&format!("DocumentRoot \"{package_web_root}\"\n"));
+    output.push_str(&format!("<Directory \"{package_web_root}\">\n"));
+    output.push_str("    Options Indexes FollowSymLinks\n");
+    output.push_str("    AllowOverride All\n");
+    output.push_str("    Require all granted\n");
+    output.push_str("</Directory>\n");
+    output.push_str(&format!("{WEBROOT_CONFIG_END_MARKER}\n"));
+
+    if let Some(mod_php_file) = find_mod_php_module_file(output_dir) {
+        if !has_active_loadmodule_for_file(&output, &format!("modules/{mod_php_file}")) {
+            output.push_str(&format!("LoadModule php_module modules/{mod_php_file}\n"));
+        }
+        output.push_str("AddType application/x-httpd-php .php .phtml\n");
+        output.push_str("DirectoryIndex index.php index.html\n");
+    } else if let Some(php_cgi_rel_path) = php_cgi_rel {
+        if !(has_mod_actions_file && has_mod_cgi_file) {
+            return Err(BuilderError::PhpRuntimeRequired(
+                "Apache kann PHP nicht ausfuehren: Es fehlt mod_php und/oder die CGI-Module mod_actions.so + mod_cgi.so.".to_string(),
+            ));
+        }
+
+        if !has_active_loadmodule_for_file(&output, "modules/mod_actions.so") {
+            output.push_str("LoadModule actions_module modules/mod_actions.so\n");
+        }
+        if !has_active_loadmodule_for_file(&output, "modules/mod_cgi.so") {
+            output.push_str("LoadModule cgi_module modules/mod_cgi.so\n");
+        }
+
+        let php_runtime_dir = output_dir.join("runtime").join("php");
+        let php_cgi_dir = php_runtime_dir.to_string_lossy().replace('\\', "/");
+        output.push_str(&format!("{PHP_CONFIG_BEGIN_MARKER}\n"));
+        output.push_str("AddType application/x-httpd-php .php .phtml\n");
+        output.push_str("Action application/x-httpd-php /php-cgi/php-cgi.exe\n");
+        output.push_str(&format!("ScriptAlias /php-cgi/ \"{php_cgi_dir}/\"\n"));
+        output.push_str(&format!("SetEnv PHPRC \"{php_cgi_dir}\"\n"));
+        output.push_str("DirectoryIndex index.php index.html\n");
+        output.push_str(&format!("<Directory \"{php_cgi_dir}\">\n"));
+        output.push_str("    Options +ExecCGI\n");
+        output.push_str("    Require all granted\n");
+        output.push_str("</Directory>\n");
+        output.push_str(&format!("{PHP_CONFIG_END_MARKER}\n"));
+
+        let php_cgi_target = output_dir.join(php_cgi_rel_path);
+        if !php_cgi_target.exists() {
+            return Err(BuilderError::PhpRuntimeRequired(
+                "php-cgi.exe wurde erwartet, aber nicht gefunden".to_string(),
+            ));
+        }
+    } else {
+        return Err(BuilderError::PhpRuntimeRequired(
+            "Apache kann PHP nicht ausfuehren: Es wurde weder mod_php noch php-cgi.exe gefunden.".to_string(),
+        ));
+    }
+
     fs::write(conf_path, output)?;
     Ok(())
+}
+
+fn strip_managed_php_block(input: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut in_block = false;
+
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if trimmed == PHP_CONFIG_BEGIN_MARKER {
+            in_block = true;
+            continue;
+        }
+        if trimmed == PHP_CONFIG_END_MARKER {
+            in_block = false;
+            continue;
+        }
+        if !in_block {
+            lines.push(line.to_string());
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn strip_managed_webroot_block(input: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut in_block = false;
+
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if trimmed == WEBROOT_CONFIG_BEGIN_MARKER {
+            in_block = true;
+            continue;
+        }
+        if trimmed == WEBROOT_CONFIG_END_MARKER {
+            in_block = false;
+            continue;
+        }
+        if !in_block {
+            lines.push(line.to_string());
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn parse_load_module_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("LoadModule ") {
+        return None;
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let _ = parts.next()?;
+    let module_name = parts.next()?.to_string();
+    let module_file = parts.next()?.replace('"', "");
+    Some((module_name, module_file))
+}
+
+fn has_active_loadmodule_for_file(content: &str, module_file: &str) -> bool {
+    let needle = module_file.to_ascii_lowercase();
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("LoadModule ") {
+            continue;
+        }
+        if let Some(file) = load_module_file_from_line(trimmed) {
+            if file.to_ascii_lowercase() == needle {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn find_existing_relative_path(output_dir: &Path, candidates: &[&str]) -> Option<PathBuf> {
+    for rel in candidates {
+        let rel_path = PathBuf::from(rel.replace('\\', "/"));
+        if output_dir.join(&rel_path).exists() {
+            return Some(rel_path);
+        }
+    }
+    None
+}
+
+fn find_mod_php_module_file(output_dir: &Path) -> Option<String> {
+    let modules_dir = output_dir.join("runtime").join("apache").join("modules");
+    if !modules_dir.exists() {
+        return None;
+    }
+
+    for entry in fs::read_dir(modules_dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let file = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if file.starts_with("mod_php") && file.ends_with(".so") {
+            return Some(file);
+        }
+    }
+
+    None
+}
+
+fn find_php_runtime_zip(components_dir: &Path) -> Option<PathBuf> {
+    let entries = fs::read_dir(components_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        if path
+            .extension()
+            .and_then(|v| v.to_str())
+            .map(|v| v.eq_ignore_ascii_case("zip"))
+            != Some(true)
+        {
+            continue;
+        }
+
+        let lower_name = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !lower_name.contains("php") || lower_name.contains("phpmyadmin") {
+            continue;
+        }
+
+        if validate_zip_contains_any(&path, "PHP", &["php-cgi.exe", "php/php-cgi.exe"]).is_ok() {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+fn has_mod_php_module_in_apache_root(apache_root: &Path) -> bool {
+    let modules_dir = apache_root.join("modules");
+    if !modules_dir.exists() {
+        return false;
+    }
+
+    let Ok(entries) = fs::read_dir(modules_dir) else {
+        return false;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let file = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if file.starts_with("mod_php") && file.ends_with(".so") {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn attach_php_runtime(
+    project_root: &Path,
+    php_target: &Path,
+    php_extensions: Option<&[String]>,
+) -> Result<(), BuilderError> {
+    let components_dir = project_root.join("Components");
+    let Some(php_runtime_zip) = find_php_runtime_zip(&components_dir) else {
+        return Err(BuilderError::PhpRuntimeRequired(
+            "Keine PHP-Runtime in Components gefunden. Lege ein PHP-ZIP mit php-cgi.exe ab.".to_string(),
+        ));
+    };
+
+    extract_archive_into_web_component(&php_runtime_zip, php_target)?;
+    prune_php_runtime(php_target, php_extensions)?;
+    Ok(())
+}
+
+fn normalize_php_extension_name(raw: &str) -> Option<String> {
+    let mut value = raw.trim().to_ascii_lowercase();
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Some(stripped) = value.strip_prefix("php_") {
+        value = stripped.to_string();
+    }
+    if let Some(stripped) = value.strip_suffix(".dll") {
+        value = stripped.to_string();
+    }
+
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn build_required_php_extension_dlls(php_extensions: Option<&[String]>) -> Vec<String> {
+    let mut keep: Vec<String> = Vec::new();
+
+    if let Some(extensions) = php_extensions {
+        for extension in extensions {
+            let Some(normalized) = normalize_php_extension_name(extension) else {
+                continue;
+            };
+
+            let dll = format!("php_{normalized}.dll");
+            if !keep.iter().any(|entry| entry == &dll) {
+                keep.push(dll);
+            }
+
+            if normalized == "mysqli" || normalized == "pdo_mysql" {
+                let mysqlnd = "php_mysqlnd.dll".to_string();
+                if !keep.iter().any(|entry| entry == &mysqlnd) {
+                    keep.push(mysqlnd);
+                }
+            }
+        }
+    }
+
+    let opcache = "php_opcache.dll".to_string();
+    if !keep.iter().any(|entry| entry == &opcache) {
+        keep.push(opcache);
+    }
+
+    keep
+}
+
+fn prune_php_runtime(php_root: &Path, php_extensions: Option<&[String]>) -> Result<(), BuilderError> {
+    if !php_root.exists() {
+        return Ok(());
+    }
+
+    for dir in ["dev", "extras"] {
+        remove_path_if_exists(&php_root.join(dir))?;
+    }
+
+    for file_name in [
+        "deplister.exe",
+        "phpdbg.exe",
+        "php8phpdbg.dll",
+        "phar.phar.bat",
+        "pharcommand.phar",
+        "php.ini-development",
+        "php.ini-production",
+        "README.md",
+        "news.txt",
+        "readme-redist-bins.txt",
+        "snapshot.txt",
+    ] {
+        remove_path_if_exists(&php_root.join(file_name))?;
+    }
+
+    let required_ext = build_required_php_extension_dlls(php_extensions);
+    let ext_dir = php_root.join("ext");
+    if ext_dir.exists() {
+        for entry in fs::read_dir(&ext_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let file_name = path
+                .file_name()
+                .and_then(|v| v.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+
+            if file_name.ends_with(".dll")
+                && !required_ext.iter().any(|required| required == &file_name)
+            {
+                fs::remove_file(path)?;
+            }
+        }
+    }
+
+    remove_files_by_extension(php_root, &["pdb", "lib", "exp"])?;
+    remove_empty_dirs(php_root)?;
+    Ok(())
+}
+
+fn has_php_runtime(output_dir: &Path) -> bool {
+    find_mod_php_module_file(output_dir).is_some()
+        || find_existing_relative_path(
+            output_dir,
+            &["runtime/php/php-cgi.exe", "runtime/apache/bin/php-cgi.exe"],
+        )
+        .is_some()
 }
 
 fn load_module_file_from_line(line: &str) -> Option<String> {
@@ -1016,16 +1673,260 @@ fn component_version_from_zip(zip_path: &Path) -> String {
     "unbekannt".to_string()
 }
 
-fn write_welcome_page(
+fn component_display_name_from_filename(file_name: &str) -> String {
+    let stem = file_name.strip_suffix(".zip").unwrap_or(file_name);
+
+    if stem.is_empty() {
+        return "Component".to_string();
+    }
+
+    let mut words: Vec<String> = Vec::new();
+    for raw in stem.split(|c: char| !c.is_ascii_alphanumeric()) {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if trimmed.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+
+        let mut chars = trimmed.chars();
+        let first = chars.next().unwrap_or_default().to_ascii_uppercase();
+        let rest = chars.as_str().to_ascii_lowercase();
+        words.push(format!("{first}{rest}"));
+    }
+
+    if words.is_empty() {
+        stem.to_string()
+    } else {
+        words.join(" ")
+    }
+}
+
+fn default_target_subdir_for_component(name: &str, file_name: &str) -> String {
+    let lower = format!("{} {}", name.to_ascii_lowercase(), file_name.to_ascii_lowercase());
+    if lower.contains("phpmyadmin") {
+        return "phpmyadmin".to_string();
+    }
+    if lower.contains("wordpress") {
+        return "wordpress".to_string();
+    }
+    if lower.contains("oswebinterface") {
+        return "oswebinterface".to_string();
+    }
+
+    let stem = file_name.strip_suffix(".zip").unwrap_or(file_name);
+    let mut normalized = String::new();
+    for ch in stem.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+        } else if ch == '-' || ch == '_' {
+            normalized.push('-');
+        }
+    }
+
+    let compact = normalized
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if compact.is_empty() {
+        "component".to_string()
+    } else {
+        compact
+    }
+}
+
+fn resolve_package_web_root(output_dir: &Path, web_root: Option<&str>) -> PathBuf {
+    let web_root = web_root.unwrap_or("./Data/http");
+    let root_path = Path::new(web_root);
+    if root_path.is_absolute() {
+        output_dir.join("Data").join("http")
+    } else {
+        output_dir.join(root_path)
+    }
+}
+
+fn sanitize_target_subdir(raw: &str) -> Option<PathBuf> {
+    let mut parts: Vec<String> = Vec::new();
+    for part in raw.split(['/', '\\']) {
+        let trimmed = part.trim();
+        if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+            continue;
+        }
+
+        let safe: String = trimmed
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+            .collect();
+        if !safe.is_empty() {
+            parts.push(safe);
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(parts.join("/")))
+    }
+}
+
+fn apply_extra_web_components(
+    project_root: &Path,
     output_dir: &Path,
-    runtime_dir: &Path,
+    web_root: Option<&str>,
+    components: &[ExtraComponentPreset],
+) -> Result<(), BuilderError> {
+    if components.is_empty() {
+        return Ok(());
+    }
+
+    let package_web_root = resolve_package_web_root(output_dir, web_root);
+    fs::create_dir_all(&package_web_root)?;
+    let targets = vec![package_web_root.clone()];
+
+    for component in components {
+        let zip_path = resolve_components_scoped_path(
+            project_root,
+            &component.zip_path,
+            &component.name,
+        )?;
+
+        // PHP runtime archives are system components and must not be deployed as web apps.
+        let zip_file_name = zip_path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if zip_file_name.contains("php") && !zip_file_name.contains("phpmyadmin") {
+            continue;
+        }
+
+        if !zip_path.exists() {
+            return Err(BuilderError::Zip(format!(
+                "extra component zip not found: {}",
+                zip_path.display()
+            )));
+        }
+
+        let fallback = default_target_subdir_for_component(
+            &component.name,
+            zip_path
+                .file_name()
+                .and_then(|v| v.to_str())
+                .unwrap_or_default(),
+        );
+        let target_subdir = component
+            .target_subdir
+            .as_deref()
+            .and_then(sanitize_target_subdir)
+            .or_else(|| sanitize_target_subdir(&fallback))
+            .unwrap_or_else(|| PathBuf::from("component"));
+
+        for root in &targets {
+            let target_dir = root.join(&target_subdir);
+            fs::create_dir_all(&target_dir)?;
+            extract_archive_into_web_component(&zip_path, &target_dir)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn extract_archive_into_web_component(zip_path: &Path, target_dir: &Path) -> Result<(), BuilderError> {
+    let strip_prefix = detect_single_zip_root_prefix(zip_path)?;
+    let file = open_file_with_context(zip_path, "opening extra component archive")?;
+    let mut archive = ZipArchive::new(file).map_err(|err| BuilderError::Zip(err.to_string()))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|err| BuilderError::Zip(err.to_string()))?;
+
+        let Some(safe_name) = entry.enclosed_name().map(|p| p.to_owned()) else {
+            continue;
+        };
+
+        let mut relative = safe_name;
+        if let Some(prefix) = strip_prefix.as_ref() {
+            if let Ok(stripped) = relative.strip_prefix(prefix) {
+                relative = stripped.to_path_buf();
+            }
+        }
+
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+
+        let out_path = target_dir.join(&relative);
+        if entry.is_dir() {
+            fs::create_dir_all(&out_path)?;
+            continue;
+        }
+
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut output = fs::File::create(&out_path)?;
+        io::copy(&mut entry, &mut output)?;
+    }
+
+    Ok(())
+}
+
+fn detect_single_zip_root_prefix(zip_path: &Path) -> Result<Option<PathBuf>, BuilderError> {
+    let file = open_file_with_context(zip_path, "opening extra component archive")?;
+    let mut archive = ZipArchive::new(file).map_err(|err| BuilderError::Zip(err.to_string()))?;
+
+    let mut root: Option<String> = None;
+    let mut saw_nested_path = false;
+
+    for i in 0..archive.len() {
+        let entry = archive
+            .by_index(i)
+            .map_err(|err| BuilderError::Zip(err.to_string()))?;
+        let Some(safe_name) = entry.enclosed_name() else {
+            continue;
+        };
+
+        let parts: Vec<String> = safe_name
+            .iter()
+            .map(|part| part.to_string_lossy().to_string())
+            .collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        if parts.len() > 1 {
+            saw_nested_path = true;
+        }
+
+        let first = parts[0].clone();
+        match &root {
+            Some(current) if current != &first => return Ok(None),
+            None => root = Some(first),
+            _ => {}
+        }
+    }
+
+    if saw_nested_path {
+        Ok(root.map(PathBuf::from))
+    } else {
+        Ok(None)
+    }
+}
+
+fn write_welcome_page(
+    project_root: &Path,
+    output_dir: &Path,
     web_root: Option<&str>,
     database_names: Option<&[String]>,
     version: &str,
     _apache_version: &str,
     _mariadb_version: &str,
 ) -> Result<(), BuilderError> {
-    let web_root = web_root.unwrap_or("./Data/http");
     let configured_databases = database_names
         .map(|names| {
             let mut filtered: Vec<String> = names
@@ -1044,22 +1945,16 @@ fn write_welcome_page(
     } else {
         configured_databases.join(", ")
     };
-    let html = format!(
-        "<!doctype html>\n<html lang=\"de\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>mowes-next</title>\n  <style>body {{ font-family: Segoe UI, sans-serif; margin: 2rem; }} .card {{ border: 1px solid #ddd; border-radius: 10px; padding: 1rem; max-width: 720px; }} h1 {{ margin-top: 0; }}</style>\n</head>\n<body>\n  <div class=\"card\">\n    <h1>Willkommen bei mowes-next {version}</h1>\n    <p><strong>Apache-Version:</strong> <span id=\"apache-version\">wird geladen...</span></p>\n    <p><strong>MariaDB-Version:</strong> <span id=\"mariadb-version\">wird geladen...</span></p>\n    <p><strong>Datenbanken:</strong> <span id=\"db-names\">{database_text}</span></p>\n  </div>\n  <script>\n    fetch('/versions.json', {{ cache: 'no-store' }})\n      .then(function(r) {{ return r.ok ? r.json() : Promise.reject(); }})\n      .then(function(v) {{\n        document.getElementById('apache-version').textContent = v.apache || 'unbekannt';\n        document.getElementById('mariadb-version').textContent = v.mariadb || 'unbekannt';\n      }})\n      .catch(function() {{\n        document.getElementById('apache-version').textContent = 'unbekannt';\n        document.getElementById('mariadb-version').textContent = 'unbekannt';\n      }});\n  </script>\n</body>\n</html>\n"
-    );
+    let template_path = project_root.join("projects").join("index.html");
+    let mut html = fs::read_to_string(&template_path).unwrap_or_else(|_| {
+        "<!doctype html>\n<html lang=\"de\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>mowes-next</title>\n</head>\n<body>\n  <h1>Willkommen bei mowes-next {{MOWES_VERSION}}</h1>\n  <p><strong>Datenbanken:</strong> {{DATABASE_NAMES}}</p>\n</body>\n</html>\n".to_string()
+    });
+    html = html.replace("{{MOWES_VERSION}}", version);
+    html = html.replace("{{DATABASE_NAMES}}", &database_text);
 
-    let root_path = Path::new(web_root);
-    let package_web_root = if root_path.is_absolute() {
-        output_dir.join("Data").join("http")
-    } else {
-        output_dir.join(root_path)
-    };
+    let package_web_root = resolve_package_web_root(output_dir, web_root);
     fs::create_dir_all(&package_web_root)?;
-    fs::write(package_web_root.join("index.html"), &html)?;
-
-    let apache_htdocs = runtime_dir.join("apache").join("htdocs");
-    fs::create_dir_all(&apache_htdocs)?;
-    fs::write(apache_htdocs.join("index.html"), html)?;
+    fs::write(package_web_root.join("index.html"), html)?;
 
     Ok(())
 }
@@ -1388,9 +2283,7 @@ fn write_manifest(
 }
 
 fn prepare_installable_variant(source_package_dir: &Path, installable_dir: &Path) -> Result<(), BuilderError> {
-    if installable_dir.exists() {
-        fs::remove_dir_all(installable_dir)?;
-    }
+    reset_output_target_dir(installable_dir)?;
     copy_dir_recursive(source_package_dir, installable_dir)?;
 
     let install_dir = installable_dir.join("install");
@@ -1429,5 +2322,17 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), BuilderEr
         }
     }
 
+    Ok(())
+}
+
+fn reset_output_target_dir(path: &Path) -> Result<(), BuilderError> {
+    if path.exists() {
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
+    fs::create_dir_all(path)?;
     Ok(())
 }
