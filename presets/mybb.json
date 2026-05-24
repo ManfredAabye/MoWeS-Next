@@ -1,0 +1,27 @@
+{
+  "package_name": "mowes-next-mybb",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8110,
+  "db_port": 3330,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "gd", "curl", "mbstring", "zip", "openssl", "json", "xml", "intl"],
+  "root_password": "mybb",
+  "portable": true,
+  "service": false,
+  "profile": "mybb",
+  "description": "Preset for MyBB local development",
+  "database_name": "mybb",
+  "database_connections": {
+    "mybb": "Data Source=localhost;Database=mybb;User ID=mybb;Password=***"
+  },
+  "web_root": "./Data/http",
+  "database_connection_string": "Data Source=localhost;Database=mybb;User ID=mybb;Password=***",
+  "extra_components": [
+    {
+      "name": "mybb",
+      "zip_path": "Components/mybb.zip",
+      "target_subdir": "mybb"
+    }
+  ]
+}

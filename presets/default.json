@@ -7,6 +7,9 @@
   "php_version": "8.3",
   "php_extensions": ["mysqli", "gd", "curl"],
   "database_name": "mowes",
+  "database_connections": {
+    "mowes": "Data Source=localhost;Database=mowes;User ID=mowes;Password=***"
+  },
   "web_root": "./Data/http",
   "root_password": "root",
   "portable": true,

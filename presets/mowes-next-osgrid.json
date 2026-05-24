@@ -14,7 +14,7 @@
   "web_root": "./Data/http",
   "database_connections": {
     "robust": "Data Source=localhost;Database=robust;User ID=opensim;Password=opensim",
-    "opensim": "Data Source=localhost;Database=opensim;User ID=opensim;Password=opensim",
+    "money": "Data Source=localhost;Database=money;User ID=opensim;Password=opensim",
     "sim1": "Data Source=localhost;Database=sim1;User ID=opensim;Password=opensim",
     "sim2": "Data Source=localhost;Database=sim2;User ID=opensim;Password=opensim",
     "sim3": "Data Source=localhost;Database=sim3;User ID=opensim;Password=opensim",

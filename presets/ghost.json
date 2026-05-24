@@ -1,0 +1,26 @@
+{
+  "package_name": "mowes-next-ghost",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8105,
+  "db_port": 3325,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "curl", "json", "mbstring", "openssl"],
+  "root_password": "ghost",
+  "portable": true,
+  "service": false,
+  "profile": "ghost",
+  "description": "Preset for Ghost source deployment",
+  "database_name": "ghost",
+  "database_connections": {
+    "ghost": "Data Source=localhost;Database=ghost;User ID=ghost;Password=***"
+  },
+  "web_root": "./Data/http",
+  "extra_components": [
+    {
+      "name": "ghost",
+      "zip_path": "Components/ghost.zip",
+      "target_subdir": "ghost"
+    }
+  ]
+}

@@ -12,6 +12,9 @@
   "profile": "test-project",
   "description": "Schnelles Testprofil für temporäre Projekte",
   "database_name": "test_project",
+  "database_connections": {
+    "test_project": "Data Source=localhost;Database=test_project;User ID=test_project;Password=***"
+  },
   "web_root": "./Data/http"
 }
 

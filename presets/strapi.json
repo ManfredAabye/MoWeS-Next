@@ -1,0 +1,26 @@
+{
+  "package_name": "mowes-next-strapi",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8103,
+  "db_port": 3323,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "curl", "json", "mbstring", "openssl"],
+  "root_password": "strapi",
+  "portable": true,
+  "service": false,
+  "profile": "strapi",
+  "description": "Preset for Strapi source deployment",
+  "database_name": "strapi",
+  "database_connections": {
+    "strapi": "Data Source=localhost;Database=strapi;User ID=strapi;Password=***"
+  },
+  "web_root": "./Data/http",
+  "extra_components": [
+    {
+      "name": "strapi",
+      "zip_path": "Components/strapi.zip",
+      "target_subdir": "strapi"
+    }
+  ]
+}

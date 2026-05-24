@@ -12,6 +12,9 @@
   "profile": "school-lab",
   "description": "Profil für Schulungs- und Laborumgebungen",
   "database_name": "school_lab",
+  "database_connections": {
+    "school_lab": "Data Source=localhost;Database=school_lab;User ID=school_lab;Password=***"
+  },
   "web_root": "./Data/http"
 }
 

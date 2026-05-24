@@ -1,0 +1,26 @@
+{
+  "package_name": "mowes-next-discourse",
+  "apache_zip": "Components/apache.zip",
+  "mariadb_zip": "Components/mariadb.zip",
+  "http_port": 8111,
+  "db_port": 3331,
+  "php_version": "8.3",
+  "php_extensions": ["mysqli", "curl", "json", "mbstring", "openssl"],
+  "root_password": "discourse",
+  "portable": true,
+  "service": false,
+  "profile": "discourse",
+  "description": "Preset for Discourse source deployment",
+  "database_name": "discourse",
+  "database_connections": {
+    "discourse": "Data Source=localhost;Database=discourse;User ID=discourse;Password=***"
+  },
+  "web_root": "./Data/http",
+  "extra_components": [
+    {
+      "name": "discourse",
+      "zip_path": "Components/discourse.zip",
+      "target_subdir": "discourse"
+    }
+  ]
+}

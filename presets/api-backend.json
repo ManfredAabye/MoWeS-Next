@@ -12,6 +12,9 @@
   "profile": "api-backend",
   "description": "Preset for REST/API backend projects",
   "database_name": "api",
+  "database_connections": {
+    "api": "Data Source=localhost;Database=api;User ID=api;Password=***"
+  },
   "web_root": "./Data/http",
   "database_connection_string": "Data Source=localhost;Database=api;User ID=api;Password=***"
 }

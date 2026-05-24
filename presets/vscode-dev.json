@@ -12,6 +12,9 @@
   "profile": "vscode-dev",
   "description": "Lokales Entwicklerprofil für VSCode-Projekte",
   "database_name": "vscode_dev",
+  "database_connections": {
+    "vscode_dev": "Data Source=localhost;Database=vscode_dev;User ID=vscode_dev;Password=***"
+  },
   "web_root": "./Data/http"
 }
 
