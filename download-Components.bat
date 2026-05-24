@@ -34,6 +34,20 @@ call :download "phpMyAdmin.zip" "https://files.phpmyadmin.net/phpMyAdmin/5.2.3/p
 call :download "oswebinterface.zip" "https://github.com/ManfredAabye/oswebinterface/archive/refs/heads/main.zip"
 call :download "wordpress.zip" "https://de.wordpress.org/latest-de_DE.zip"
 
+:: Weitere Komponenten (teils Source-Archive, ggf. mit zusaetzlichem Setup)
+call :download "strapi.zip" "https://github.com/strapi/strapi/archive/refs/heads/main.zip"
+call :download "directus.zip" "https://github.com/directus/directus/archive/refs/heads/main.zip"
+call :download "ghost.zip" "https://github.com/TryGhost/Ghost/archive/refs/heads/main.zip"
+
+call :download "joomla.zip" "https://github.com/joomla/joomla-cms/releases/download/6.1.1-rc1/Joomla_6.1.1-rc1-Release_Candidate-Full_Package.zip"
+call :download "drupal.zip" "https://ftp.drupal.org/files/projects/drupal-11.2.0.zip"
+call :download "typo3.zip" "https://github.com/TYPO3/typo3/archive/refs/heads/main.zip"
+
+call :download "phpbb.zip" "https://download.phpbb.com/pub/release/3.3/3.3.15/phpBB-3.3.15.zip"
+call :download "mybb.zip" "https://resources.mybb.com/downloads/mybb_1839.zip"
+call :download "discourse.zip" "https://github.com/discourse/discourse/archive/refs/heads/main.zip"
+call :download "flarum.zip" "https://github.com/flarum/flarum/archive/refs/tags/v2.0.0-rc.1.zip"
+
 if defined DOWNLOAD_FAILED (
 	echo.
 	echo [WARN] Mindestens ein Download ist fehlgeschlagen.
